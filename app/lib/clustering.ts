@@ -3,6 +3,9 @@
 import { storage, OpportunityCluster, Query } from './storage';
 import { calculateTOS } from './scoring';
 
+// Re-export types for convenience
+export type { OpportunityCluster } from './storage';
+
 /**
  * Calculate similarity between two queries based on text and intent
  */
