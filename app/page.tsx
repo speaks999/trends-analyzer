@@ -16,7 +16,6 @@ import Recommendations from '@/app/components/Recommendations';
 
 export default function Home() {
   const [queries, setQueries] = useState<Query[]>([]);
-  const [selectedQueryIds, setSelectedQueryIds] = useState<string[]>([]);
   const [classifications, setClassifications] = useState<Map<string, import('@/app/lib/storage').IntentClassification>>(new Map());
   const [clusters, setClusters] = useState<OpportunityCluster[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
@@ -108,29 +107,17 @@ export default function Home() {
   const handleRemoveQuery = (id: string) => {
     storage.removeQuery(id);
     setQueries(queries.filter(q => q.id !== id));
-    setSelectedQueryIds(selectedQueryIds.filter(qid => qid !== id));
-  };
-
-  const handleSelectQuery = (id: string) => {
-    setSelectedQueryIds(prev => {
-      if (prev.includes(id)) {
-        return prev.filter(qid => qid !== id);
-      } else {
-        return [...prev, id];
-      }
-    });
   };
 
   const handleFetchTrends = async () => {
-    if (selectedQueryIds.length === 0) {
-      alert('Please select at least one query to fetch trends for');
+    if (queries.length === 0) {
+      alert('Please add at least one query first');
       return;
     }
 
     setLoading(true);
     try {
-      const selectedQueries = queries.filter(q => selectedQueryIds.includes(q.id));
-      const queryTexts = selectedQueries.map(q => q.text);
+      const queryTexts = queries.map(q => q.text);
 
       const response = await fetch('/api/trends', {
         method: 'POST',
@@ -155,7 +142,7 @@ export default function Home() {
         const totalPoints = interestOverTime.reduce((sum: number, s: any) => sum + (s.data?.length || 0), 0);
         if (totalPoints === 0) {
           alert(
-            'Google Trends returned no time-series points for the selected queries.\n\n' +
+            'Google Trends returned no time-series points for the queries.\n\n' +
               'This usually means the queries are too specific or have insufficient search volume.\n' +
               'Try queries with broader, more commonly searched terms.'
           );
@@ -172,11 +159,6 @@ export default function Home() {
     }
   };
 
-
-  const queryNames = selectedQueryIds.map(id => {
-    const query = queries.find(q => q.id === id);
-    return query?.text || id;
-  });
 
   const recommendations = getAllRecommendations();
 
@@ -197,40 +179,31 @@ export default function Home() {
                   queries={queries}
                   classifications={classifications}
                   onRemove={handleRemoveQuery}
-                  onSelect={handleSelectQuery}
-                  selectedIds={selectedQueryIds}
                 />
               </div>
-              {queries.length > 0 && selectedQueryIds.length === 0 && (
-                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm text-yellow-800">
-                    💡 <strong>Tip:</strong> Click on queries above to select them, then click &ldquo;Fetch Trends&rdquo; to see charts.
-                  </p>
-                </div>
-              )}
-              {selectedQueryIds.length > 0 && (
+              {queries.length > 0 && (
                 <div className="mt-4">
                   <button
                     onClick={handleFetchTrends}
                     disabled={loading}
                     className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
                   >
-                    {loading ? 'Fetching...' : `Fetch Trends (${selectedQueryIds.length} selected)`}
+                    {loading ? 'Fetching Trends...' : `View Trends (${queries.length} ${queries.length === 1 ? 'query' : 'queries'})`}
                   </button>
                 </div>
               )}
             </div>
 
             {/* Chart */}
-            {selectedQueryIds.length > 0 && trendSeries.length === 0 && !loading && (
+            {queries.length > 0 && trendSeries.length === 0 && !loading && (
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="text-center py-8">
                   <p className="text-gray-500 mb-2">No trend data yet.</p>
-                  <p className="text-sm text-gray-400">Click &ldquo;Fetch Trends&rdquo; above to load data for selected queries.</p>
+                  <p className="text-sm text-gray-400">Click &ldquo;View Trends&rdquo; above to load data for your queries.</p>
                 </div>
               </div>
             )}
-            {selectedQueryIds.length > 0 && trendSeries.length > 0 && (
+            {queries.length > 0 && trendSeries.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-bold">Trends Over Time</h2>
@@ -260,7 +233,6 @@ export default function Home() {
               <OpportunityClusters
                 clusters={clusters}
                 queries={new Map(queries.map(q => [q.id, q]))}
-                onQueryClick={handleSelectQuery}
               />
             )}
 

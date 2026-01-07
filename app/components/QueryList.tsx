@@ -7,11 +7,9 @@ interface QueryListProps {
   queries: Query[];
   classifications: Map<string, IntentClassification>;
   onRemove: (id: string) => void;
-  onSelect: (id: string) => void;
-  selectedIds: string[];
 }
 
-export default function QueryList({ queries, classifications, onRemove, onSelect, selectedIds }: QueryListProps) {
+export default function QueryList({ queries, classifications, onRemove }: QueryListProps) {
 
   return (
     <div className="space-y-2">
@@ -23,12 +21,7 @@ export default function QueryList({ queries, classifications, onRemove, onSelect
           {queries.map(query => (
             <div
               key={query.id}
-              className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                selectedIds.includes(query.id)
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
-              onClick={() => onSelect(query.id)}
+              className="p-4 border border-gray-200 rounded-lg"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -38,10 +31,7 @@ export default function QueryList({ queries, classifications, onRemove, onSelect
                   </div>
                 </div>
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemove(query.id);
-                  }}
+                  onClick={() => onRemove(query.id)}
                   className="ml-4 text-red-500 hover:text-red-700"
                 >
                   Remove
