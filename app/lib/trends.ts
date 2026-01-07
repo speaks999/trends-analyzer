@@ -18,6 +18,7 @@ export interface InterestOverTimeResult {
   query: string;
   data: TrendDataPoint[];
   window: TimeWindow;
+  geo?: string; // Region code (e.g., 'US', 'CA')
 }
 
 export interface RegionalInterest {
@@ -108,17 +109,19 @@ function getStartDate(window: TimeWindow): Date {
  */
 export async function getInterestOverTime(
   keyword: string | string[],
-  window: TimeWindow = '12m'
+  window: TimeWindow = '12m',
+  geo: string = 'US'
 ): Promise<InterestOverTimeResult[]> {
   try {
     const startTime = getStartDate(window);
     const keywords = Array.isArray(keyword) ? keyword : [keyword];
 
-    console.log(`Fetching interest over time for: ${keywords.join(', ')} (${window})`);
+    console.log(`Fetching interest over time for: ${keywords.join(', ')} (${window}, geo: ${geo})`);
 
     const results = await googleTrends.interestOverTime({
       keyword: keywords,
       startTime,
+      geo,
     });
 
     const parsed = JSON.parse(results);
@@ -159,6 +162,7 @@ export async function getInterestOverTime(
         query: kw,
         data,
         window,
+        geo,
       };
     });
   } catch (error) {
@@ -169,6 +173,7 @@ export async function getInterestOverTime(
       query: kw,
       data: [],
       window,
+      geo,
     }));
   }
 }
@@ -232,7 +237,8 @@ export async function getTrendData(
   keyword: string | string[],
   windows: TimeWindow[] = ['30d', '90d', '12m'],
   includeRegional: boolean = true,
-  includeRelated: boolean = true
+  includeRelated: boolean = true,
+  regions: string[] = ['US', 'CA'] // Default to both US and Canada
 ): Promise<TrendResult> {
   const keywords = Array.isArray(keyword) ? keyword : [keyword];
   
@@ -240,21 +246,29 @@ export async function getTrendData(
   console.log('Keywords received:', JSON.stringify(keywords, null, 2));
   console.log('Number of keywords:', keywords.length);
   console.log('Windows:', windows);
+  console.log('Regions:', regions);
   
   const interestOverTime: InterestOverTimeResult[] = [];
 
-  // Fetch interest over time for each window
+  // Fetch interest over time for each window and each region
   for (const window of windows) {
-    try {
-      console.log(`Fetching ${window} data for keywords:`, keywords);
-      const windowData = await getInterestOverTime(keywords, window);
-      console.log(`${window} returned ${windowData.length} series:`, windowData.map(s => ({
-        query: s.query,
-        dataPoints: s.data.length
-      })));
-      interestOverTime.push(...windowData);
-    } catch (error) {
-      console.error(`Error fetching ${window} data:`, error);
+    for (const geo of regions) {
+      try {
+        console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${geo})`);
+        const windowData = await getInterestOverTime(keywords, window, geo);
+        // Label queries with region for clarity
+        const labeledData = windowData.map(s => ({
+          ...s,
+          query: regions.length > 1 ? `${s.query} (${geo})` : s.query,
+        }));
+        console.log(`${window} (${geo}) returned ${labeledData.length} series:`, labeledData.map(s => ({
+          query: s.query,
+          dataPoints: s.data.length
+        })));
+        interestOverTime.push(...labeledData);
+      } catch (error) {
+        console.error(`Error fetching ${window} data for ${geo}:`, error);
+      }
     }
   }
   
