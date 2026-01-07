@@ -154,14 +154,10 @@ export default function Home() {
 
         const totalPoints = interestOverTime.reduce((sum: number, s: any) => sum + (s.data?.length || 0), 0);
         if (totalPoints === 0) {
-          const resolved = (data.resolved || [])
-            .map((r: any) => `${r.originalQuery} → "${r.keywordUsed}"`)
-            .join('\n');
           alert(
-            'Google Trends returned no time-series points for this query.\n\n' +
-              'This usually means the phrase is too specific.\n' +
-              'Try a shorter keyword-like query (e.g. "cash flow issues", "customer acquisition cost").\n\n' +
-              (resolved ? `Keyword simplification used:\n${resolved}` : '')
+            'Google Trends returned no time-series points for the selected queries.\n\n' +
+              'This usually means the queries are too specific or have insufficient search volume.\n' +
+              'Try queries with broader, more commonly searched terms.'
           );
         }
       } else {
