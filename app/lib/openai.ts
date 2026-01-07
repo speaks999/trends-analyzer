@@ -43,24 +43,36 @@ export async function generateQueries(
 
   const prompt = `You are an expert at understanding what entrepreneurs search for on Google when they need help.
 
-Generate ${count} specific, realistic search queries that entrepreneurs would use. These should be:
-- Problem-focused and specific
-- How entrepreneurs actually phrase their searches
+Generate ${count} short, keyword-focused search queries (2-4 words ideal, maximum 5 words). These should be:
+- SHORT and keyword-like (e.g., "cash flow issues", "customer churn", "sales automation")
+- Problem-focused core terms that entrepreneurs actually search
+- Avoid full sentences or long phrases (e.g., NOT "how to fix cash flow issues in my early-stage startup")
+- Think like Google Trends keywords - simple, searchable terms
 - Relevant to common entrepreneurial challenges
 ${focusPrompt}
 
-Available query templates to inspire you:
-${templates.map(t => `- ${t}`).join('\n')}
+Examples of GOOD short queries:
+- "cash flow problems"
+- "customer acquisition cost"
+- "sales follow up"
+- "startup funding"
+- "churn rate"
+- "pricing strategy"
 
-Available dimensions:
+Examples of BAD long queries (avoid these):
+- "how to fix cash flow issues in my early-stage startup"
+- "best way to manage customer acquisition costs for growth"
+- "software for automating sales follow-up processes"
+
+Available dimensions to inspire topics:
 - Stages: ${dimensions.stages.join(', ')}
 - Functions: ${dimensions.functions.join(', ')}
 - Pains: ${dimensions.pains.join(', ')}
 - Assets: ${dimensions.assets.join(', ')}
 ${contextPrompt}
 
-Return a JSON object with a "queries" array, like:
-{"queries": ["query 1", "query 2", "query 3"]}`;
+Return a JSON object with a "queries" array of SHORT keyword phrases:
+{"queries": ["cash flow issues", "customer churn", "sales automation"]}`;
 
   try {
     const completion = await openai.chat.completions.create({
