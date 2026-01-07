@@ -1,13 +1,13 @@
 // API route for fetching trends for multiple time windows and storing snapshots
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTrendData, TimeWindow } from '@/app/lib/trends';
+import { getTrendData, TimeWindow, GeoRegion } from '@/app/lib/trends';
 import { storage } from '@/app/lib/storage';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { queries, windows = ['30d', '90d', '12m'], includeRegional = true, includeRelated = true } = body;
+    const { queries, windows = ['30d', '90d', '12m'], includeRegional = true, includeRelated = true, regions = ['US', 'CA'] } = body;
 
     console.log('=== TRENDS API REQUEST ===');
     console.log('Received queries:', JSON.stringify(queries, null, 2));
@@ -53,7 +53,8 @@ export async function POST(request: NextRequest) {
         queries, // Use original queries directly
         windows as TimeWindow[],
         includeRegional,
-        includeRelated
+        includeRelated,
+        regions as GeoRegion[] // Pass regions to getTrendData
       );
       
       console.log('=== TRENDS DATA RETURNED ===');
@@ -75,29 +76,32 @@ export async function POST(request: NextRequest) {
       data: Array<{ date: string; value: number }>;
     }> = [];
 
-    // Create a map from query text to resolved entry
-    const queryToResolved = new Map<string, typeof resolved[0]>();
+    // Create a map from query text (with region suffix) to resolved entry
+    // For each original query, we expect two series from getTrendData (US and CA)
+    const fullQueryTextToResolved = new Map<string, typeof resolved[0]>();
     resolved.forEach(r => {
-      queryToResolved.set(r.originalQuery, r);
+      regions.forEach((region: GeoRegion) => {
+        fullQueryTextToResolved.set(`${r.originalQuery} (${region})`, r);
+      });
     });
 
     console.log('=== MAPPING RESULTS ===');
-    console.log('Query to resolved map:', Array.from(queryToResolved.entries()).map(([q, r]) => ({
-      query: q,
-      queryId: r.queryId
+    console.log('Query to resolved map:', Array.from(fullQueryTextToResolved.entries()).map(([key, value]) => ({
+      query: key,
+      originalQuery: value.originalQuery,
+      queryId: value.queryId
     })));
 
     trendData.interestOverTime.forEach((series, index) => {
-      const queryText = series.query; // This is the original query text
-      const resolvedEntry = queryToResolved.get(queryText);
+      const queryTextWithRegion = series.query; // e.g., "cash flow issues (US)"
+      const resolvedEntry = fullQueryTextToResolved.get(queryTextWithRegion);
       
-      console.log(`Processing series ${index + 1}: "${queryText}"`);
+      console.log(`Processing series ${index + 1}: "${queryTextWithRegion}"`);
       console.log(`  - Found in resolved map: ${!!resolvedEntry}`);
-      console.log(`  - Query ID: ${resolvedEntry?.queryId || 'NOT FOUND'}`);
+      console.log(`  - Query ID: ${resolvedEntry?.queryId ? 'FOUND' : 'NOT FOUND'}`);
       console.log(`  - Data points: ${series.data.length}`);
-      
-      // Store snapshots if we have a query ID, but still return data for charting
-      if (resolvedEntry?.queryId) {
+
+      if (resolvedEntry && resolvedEntry.queryId) {
         // Store each data point as a TrendSnapshot
         series.data.forEach(point => {
           storage.addTrendSnapshot({
@@ -105,16 +109,17 @@ export async function POST(request: NextRequest) {
             date: point.date instanceof Date ? point.date : new Date(point.date),
             interest_value: point.value,
             window: series.window as '30d' | '90d' | '12m',
+            region: queryTextWithRegion.match(/\((US|CA)\)$/)?.[1] as GeoRegion, // Extract region from name
           });
         });
-        console.log(`  ✓ Stored ${series.data.length} snapshots`);
+        console.log('  ✓ Snapshots stored');
       } else {
         console.warn(`  ⚠️ No query ID found - skipping snapshot storage but still returning chart data`);
       }
 
-      // Always create a series entry for charting, even without query ID
+      // Always add to interestOverTime for chart display
       interestOverTime.push({
-        query: queryText,
+        query: queryTextWithRegion, // Use the name with region suffix for chart legend
         window: series.window as '30d' | '90d' | '12m',
         data: series.data.map(p => ({
           date: p.date instanceof Date ? p.date.toISOString() : new Date(p.date).toISOString(),

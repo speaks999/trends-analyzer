@@ -129,6 +129,7 @@ export default function Home() {
           windows: ['30d', '90d', '12m'],
           includeRegional: true,
           includeRelated: true,
+          regions: ['US', 'CA'], // Request data for both US and Canada
         }),
       });
 

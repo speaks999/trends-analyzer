@@ -1,8 +1,7 @@
-// Google Trends API wrapper
-
-import googleTrends from 'google-trends-api';
+// Google Trends API wrapper using SerpApi
 
 export type TimeWindow = '30d' | '90d' | '12m';
+export type GeoRegion = 'US' | 'CA';
 
 export interface TrendsKeywordResolution {
   originalQuery: string;
@@ -38,139 +37,131 @@ export interface TrendResult {
   relatedQueries?: RelatedQuery[];
 }
 
-const STOPWORDS = new Set([
-  'how', 'to', 'fix', 'get', 'best', 'way', 'manage', 'why', 'is', 'low',
-  'in', 'my', 'your', 'our', 'for', 'of', 'a', 'an', 'the', 'as', 'and', 'or',
-  'during', 'with', 'without', 'on', 'at', 'from', 'into', 'this', 'that',
-  'startup', 'business', 'company', 'founder', 'early', 'stage', 'early-stage',
-]);
-
 /**
- * Simplify a natural-language query into a keyword phrase more likely to have Trends data.
- * Example: "how to fix cash flow issues in my early-stage startup" -> "cash flow issues"
+ * Convert time window to SerpApi date format
  */
-export function simplifyTrendsKeyword(original: string): string {
-  const cleaned = original
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Remove common leading patterns
-  const stripped = cleaned
-    .replace(/^(how to|best way to|best practices for|why is|software for)\s+/i, '')
-    .trim();
-
-  const tokens = stripped
-    .split(/\s+/)
-    .filter(t => t.length > 1)
-    .filter(t => !STOPWORDS.has(t));
-
-  // Prefer known high-signal phrases if present
-  const joined = tokens.join(' ');
-  const prefer = [
-    'cash flow',
-    'customer acquisition',
-    'sales follow up',
-    'follow up',
-    'churn',
-    'pricing',
-    'retention',
-    'crm',
-  ];
-  for (const p of prefer) {
-    if (joined.includes(p)) return p;
-  }
-
-  // Default: keep first 2-5 tokens
-  const limited = tokens.slice(0, Math.min(5, Math.max(2, tokens.length))).join(' ');
-  return limited || cleaned.slice(0, 50);
-}
-
-/**
- * Convert time window to start date
- */
-function getStartDate(window: TimeWindow): Date {
-  const now = new Date();
+function getSerpApiDate(window: TimeWindow): string {
   switch (window) {
     case '30d':
-      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      return 'now 30-d';
     case '90d':
-      return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      return 'now 90-d';
     case '12m':
-      return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      return 'today 12-m';
     default:
-      return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      return 'today 12-m';
   }
 }
 
 /**
- * Fetch interest over time for a query
+ * Fetch interest over time for a query using SerpApi
  */
 export async function getInterestOverTime(
   keyword: string | string[],
   window: TimeWindow = '12m',
-  geo: string = 'US'
+  geo: GeoRegion = 'US'
 ): Promise<InterestOverTimeResult[]> {
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) {
+    throw new Error('SERPAPI_API_KEY is not configured');
+  }
+
   try {
-    const startTime = getStartDate(window);
     const keywords = Array.isArray(keyword) ? keyword : [keyword];
+    const date = getSerpApiDate(window);
 
     console.log(`Fetching interest over time for: ${keywords.join(', ')} (${window}, geo: ${geo})`);
 
-    const results = await googleTrends.interestOverTime({
-      keyword: keywords,
-      startTime,
-      geo,
+    // SerpApi supports multiple keywords in a single query (comma-separated)
+    const queryString = keywords.join(', ');
+
+    const params = new URLSearchParams({
+      engine: 'google_trends',
+      q: queryString,
+      api_key: apiKey,
+      date: date,
+      geo: geo,
+      data_type: 'TIMESERIES',
     });
 
-    const parsed = JSON.parse(results);
-    console.log('Parsed Google Trends response:', {
-      hasDefault: !!parsed.default,
-      hasTimelineData: !!parsed.default?.timelineData,
-      timelineDataLength: parsed.default?.timelineData?.length || 0,
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    console.log(`SerpApi URL: ${url.replace(apiKey, '***')}`);
+
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+
+    // Check for errors in response
+    if (data.error) {
+      throw new Error(`SerpApi error: ${data.error}`);
+    }
+
+    console.log('SerpApi response received:', {
+      hasInterestOverTime: !!data.interest_over_time,
+      timelineDataLength: data.interest_over_time?.timeline_data?.length || 0,
     });
 
-    const timelineData = parsed.default?.timelineData || [];
+    const timelineData = data.interest_over_time?.timeline_data || [];
 
     if (timelineData.length === 0) {
-      console.warn(`No timeline data returned for ${keywords.join(', ')}`);
-      // Return empty data instead of throwing
+      console.warn(`No timeline data returned for ${keywords.join(', ')} (geo: ${geo})`);
       return keywords.map((kw) => ({
-        query: kw,
+        query: `${kw} (${geo})`,
         data: [],
         window,
+        geo,
       }));
     }
 
+    // Process timeline data
+    // SerpApi returns data in format: { date, timestamp, values: [{ query, value, extracted_value }] }
     return keywords.map((kw, index) => {
       const data: TrendDataPoint[] = timelineData.map((point: any) => {
-        // Handle both array and single value formats
-        const value = Array.isArray(point.value) 
-          ? (point.value[index] || point.value[0] || 0)
-          : (point.value || 0);
+        // Find the value for this keyword in the values array
+        let value = 0;
+        if (point.values && Array.isArray(point.values)) {
+          // If multiple keywords, find the one matching this keyword
+          const keywordValue = point.values.find((v: any) => 
+            v.query?.toLowerCase() === kw.toLowerCase()
+          );
+          value = keywordValue?.extracted_value || keywordValue?.value || 0;
+          
+          // If not found by query name, use index
+          if (value === 0 && point.values[index]) {
+            value = point.values[index].extracted_value || point.values[index].value || 0;
+          }
+        }
+
+        // Parse timestamp (can be string or number)
+        const timestamp = typeof point.timestamp === 'string' 
+          ? parseInt(point.timestamp, 10) 
+          : point.timestamp;
         
         return {
-          date: new Date(parseInt(point.time) * 1000),
+          date: new Date(timestamp * 1000),
           value: value,
         };
       });
 
-      console.log(`Processed ${data.length} data points for ${kw}`);
+      console.log(`Processed ${data.length} data points for ${kw} (geo: ${geo})`);
 
       return {
-        query: kw,
+        query: `${kw} (${geo})`,
         data,
         window,
         geo,
       };
     });
   } catch (error) {
-    console.error(`Error fetching interest over time for ${keyword}:`, error);
-    // Return empty data instead of throwing to prevent complete failure
+    console.error(`Error fetching interest over time for ${keyword} (geo: ${geo}):`, error);
     const keywords = Array.isArray(keyword) ? keyword : [keyword];
     return keywords.map((kw) => ({
-      query: kw,
+      query: `${kw} (${geo})`,
       data: [],
       window,
       geo,
@@ -179,24 +170,46 @@ export async function getInterestOverTime(
 }
 
 /**
- * Fetch interest by region
+ * Fetch interest by region using SerpApi
  */
 export async function getInterestByRegion(
   keyword: string,
-  geo: string = 'US'
+  geo: GeoRegion = 'US'
 ): Promise<RegionalInterest[]> {
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) {
+    throw new Error('SERPAPI_API_KEY is not configured');
+  }
+
   try {
-    const results = await googleTrends.interestByRegion({
-      keyword,
-      geo,
+    const params = new URLSearchParams({
+      engine: 'google_trends',
+      q: keyword,
+      api_key: apiKey,
+      date: 'today 12-m',
+      geo: geo,
+      data_type: 'GEO_MAP',
     });
 
-    const parsed = JSON.parse(results);
-    const geoMapData = parsed.default?.geoMapData || [];
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
+    }
 
-    return geoMapData.map((item: any) => ({
-      region: item.geoName,
-      value: item.value[0] || 0,
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(`SerpApi error: ${data.error}`);
+    }
+
+    // SerpApi returns compared_breakdown_by_region or interest_by_region
+    const regionData = data.compared_breakdown_by_region || data.interest_by_region || [];
+
+    return regionData.map((item: any) => ({
+      region: item.location || item.geo || item.region || 'Unknown',
+      value: item.values?.[0]?.extracted_value || item.values?.[0]?.value || 0,
     }));
   } catch (error) {
     console.error(`Error fetching interest by region for ${keyword}:`, error);
@@ -205,27 +218,58 @@ export async function getInterestByRegion(
 }
 
 /**
- * Fetch related queries (rising only)
+ * Fetch related queries using SerpApi
  */
 export async function getRelatedQueries(
   keyword: string
 ): Promise<RelatedQuery[]> {
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) {
+    throw new Error('SERPAPI_API_KEY is not configured');
+  }
+
   try {
-    const results = await googleTrends.relatedQueries({
-      keyword,
+    const params = new URLSearchParams({
+      engine: 'google_trends',
+      q: keyword,
+      api_key: apiKey,
+      date: 'today 12-m',
+      data_type: 'RELATED_QUERIES',
     });
 
-    const parsed = JSON.parse(results);
-    const risingQueries = parsed.default?.rising || [];
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
+    }
 
-    return risingQueries.map((item: any) => ({
-      query: item.query,
-      value: item.value || 0,
-      isRising: true,
-    }));
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(`SerpApi error: ${data.error}`);
+    }
+
+    // SerpApi returns related_queries with rising and top arrays
+    const risingQueries = data.related_queries?.rising || [];
+    const topQueries = data.related_queries?.top || [];
+
+    const related: RelatedQuery[] = [
+      ...risingQueries.map((item: any) => ({
+        query: item.query || item.term || '',
+        value: item.value || item.extracted_value || 0,
+        isRising: true,
+      })),
+      ...topQueries.map((item: any) => ({
+        query: item.query || item.term || '',
+        value: item.value || item.extracted_value || 0,
+        isRising: false,
+      })),
+    ];
+
+    return related.filter(q => q.query); // Filter out empty queries
   } catch (error) {
     console.error(`Error fetching related queries for ${keyword}:`, error);
-    // Return empty array on error rather than throwing
     return [];
   }
 }
@@ -238,7 +282,7 @@ export async function getTrendData(
   windows: TimeWindow[] = ['30d', '90d', '12m'],
   includeRegional: boolean = true,
   includeRelated: boolean = true,
-  regions: string[] = ['US', 'CA'] // Default to both US and Canada
+  regions: GeoRegion[] = ['US', 'CA']
 ): Promise<TrendResult> {
   const keywords = Array.isArray(keyword) ? keyword : [keyword];
   
@@ -250,35 +294,33 @@ export async function getTrendData(
   
   const interestOverTime: InterestOverTimeResult[] = [];
 
-  // Fetch interest over time for each window and each region
-  for (const window of windows) {
-    for (const geo of regions) {
+  // Fetch interest over time for each window and region
+  for (const region of regions) {
+    for (const window of windows) {
       try {
-        console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${geo})`);
-        const windowData = await getInterestOverTime(keywords, window, geo);
-        // Label queries with region for clarity
-        const labeledData = windowData.map(s => ({
-          ...s,
-          query: regions.length > 1 ? `${s.query} (${geo})` : s.query,
-        }));
-        console.log(`${window} (${geo}) returned ${labeledData.length} series:`, labeledData.map(s => ({
+        console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${region})`);
+        const windowData = await getInterestOverTime(keywords, window, region);
+        console.log(`${window} (${region}) returned ${windowData.length} series:`, windowData.map(s => ({
           query: s.query,
           dataPoints: s.data.length
         })));
-        interestOverTime.push(...labeledData);
+        interestOverTime.push(...windowData);
+        
+        // Add a small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
-        console.error(`Error fetching ${window} data for ${geo}:`, error);
+        console.error(`Error fetching ${window} data for region ${region}:`, error);
       }
     }
   }
   
   console.log(`Total interestOverTime series: ${interestOverTime.length}`);
 
-  // Fetch regional interest (only for first keyword if multiple)
+  // Fetch regional interest (only for first keyword if multiple, and for US by default)
   let regionalInterest: RegionalInterest[] | undefined;
   if (includeRegional && keywords.length > 0) {
     try {
-      regionalInterest = await getInterestByRegion(keywords[0]);
+      regionalInterest = await getInterestByRegion(keywords[0], 'US');
     } catch (error) {
       console.error('Error fetching regional interest:', error);
     }
@@ -319,4 +361,3 @@ export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
     value: (point.value / maxValue) * 100,
   }));
 }
-
