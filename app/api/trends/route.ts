@@ -29,13 +29,24 @@ export async function POST(request: NextRequest) {
       keywordUsed: simplifyTrendsKeyword(q),
       queryId: queryMap.get(q), // Find the query ID
     }));
-    const keywords = resolved.map(r => r.keywordUsed);
 
-    // Fetch trend data
+    // Create a map from keyword to list of original queries (since multiple queries can map to same keyword)
+    const keywordToResolved = new Map<string, typeof resolved>();
+    resolved.forEach(r => {
+      if (!keywordToResolved.has(r.keywordUsed)) {
+        keywordToResolved.set(r.keywordUsed, []);
+      }
+      keywordToResolved.get(r.keywordUsed)!.push(r);
+    });
+
+    // Deduplicate keywords for fetching (we'll map results back to all original queries)
+    const uniqueKeywords = Array.from(keywordToResolved.keys());
+
+    // Fetch trend data (only for unique keywords to avoid duplicate API calls)
     let trendData;
     try {
       trendData = await getTrendData(
-        keywords,
+        uniqueKeywords,
         windows as TimeWindow[],
         includeRegional,
         includeRelated
@@ -45,51 +56,61 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    // Store trend snapshots for scoring
-    // Create a map from keyword to query ID
-    const keywordToQueryId = new Map<string, string>();
-    resolved.forEach(r => {
-      if (r.queryId) {
-        keywordToQueryId.set(r.keywordUsed, r.queryId);
-      }
-    });
+    // Store trend snapshots for scoring and map results back to original queries
+    const interestOverTime: Array<{
+      query: string; // Original query text
+      window: '30d' | '90d' | '12m';
+      data: Array<{ date: string; value: number }>;
+    }> = [];
 
     trendData.interestOverTime.forEach(series => {
       const keyword = series.query; // This is the simplified keyword
-      const queryId = keywordToQueryId.get(keyword);
+      const matchingResolved = keywordToResolved.get(keyword) || [];
       
-      if (!queryId) {
-        console.warn(`No query ID found for keyword: ${keyword}`);
+      if (matchingResolved.length === 0) {
+        console.warn(`No original queries found for keyword: ${keyword}`);
         return;
       }
 
-      // Store each data point as a TrendSnapshot
-      series.data.forEach(point => {
-        storage.addTrendSnapshot({
-          query_id: queryId,
-          date: point.date instanceof Date ? point.date : new Date(point.date),
-          interest_value: point.value,
+      console.log(`Mapping keyword "${keyword}" to ${matchingResolved.length} original query(ies)`);
+
+      // For each original query that maps to this keyword, create a separate series
+      matchingResolved.forEach(res => {
+        if (!res.queryId) {
+          console.warn(`No query ID for original query: ${res.originalQuery}`);
+          return;
+        }
+
+        // Store each data point as a TrendSnapshot
+        series.data.forEach(point => {
+          storage.addTrendSnapshot({
+            query_id: res.queryId!,
+            date: point.date instanceof Date ? point.date : new Date(point.date),
+            interest_value: point.value,
+            window: series.window as '30d' | '90d' | '12m',
+          });
+        });
+
+        // Create a series entry with the original query text
+        interestOverTime.push({
+          query: res.originalQuery, // Use original query text, not keyword
           window: series.window as '30d' | '90d' | '12m',
+          data: series.data.map(p => ({
+            date: p.date instanceof Date ? p.date.toISOString() : new Date(p.date).toISOString(),
+            value: p.value,
+          })),
         });
       });
     });
 
-    // Return chart-ready data to the client (client should NOT read server memory directly)
-    const interestOverTime = trendData.interestOverTime.map(r => ({
-      query: r.query,
-      window: r.window,
-      data: r.data.map(p => ({
-        date: p.date instanceof Date ? p.date.toISOString() : new Date(p.date).toISOString(),
-        value: p.value,
-      })),
-    }));
+    console.log(`Returning ${interestOverTime.length} series for chart`);
 
     return NextResponse.json({
       success: true,
       resolved,
       data: {
         ...trendData,
-        interestOverTime,
+        interestOverTime, // Now uses original query texts
       },
     });
   } catch (error) {
