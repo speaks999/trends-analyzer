@@ -9,6 +9,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { queries, windows = ['30d', '90d', '12m'], includeRegional = true, includeRelated = true } = body;
 
+    console.log('=== TRENDS API REQUEST ===');
+    console.log('Received queries:', JSON.stringify(queries, null, 2));
+    console.log('Number of queries:', queries?.length);
+
     if (!queries || !Array.isArray(queries) || queries.length === 0) {
       return NextResponse.json(
         { success: false, error: 'Queries array is required' },
@@ -29,6 +33,9 @@ export async function POST(request: NextRequest) {
       queryId: queryMap.get(q), // Find the query ID
     }));
 
+    console.log('Resolved queries with IDs:', JSON.stringify(resolved, null, 2));
+    console.log('Sending to getTrendData:', JSON.stringify(queries, null, 2));
+
     // Fetch trend data using original queries directly
     let trendData;
     try {
@@ -38,6 +45,14 @@ export async function POST(request: NextRequest) {
         includeRegional,
         includeRelated
       );
+      
+      console.log('=== TRENDS DATA RETURNED ===');
+      console.log('Number of series returned:', trendData.interestOverTime.length);
+      console.log('Series queries:', trendData.interestOverTime.map(s => ({
+        query: s.query,
+        window: s.window,
+        dataPoints: s.data.length
+      })));
     } catch (error) {
       console.error('Error in getTrendData:', error);
       throw error;
@@ -56,12 +71,23 @@ export async function POST(request: NextRequest) {
       queryToResolved.set(r.originalQuery, r);
     });
 
-    trendData.interestOverTime.forEach(series => {
+    console.log('=== MAPPING RESULTS ===');
+    console.log('Query to resolved map:', Array.from(queryToResolved.entries()).map(([q, r]) => ({
+      query: q,
+      queryId: r.queryId
+    })));
+
+    trendData.interestOverTime.forEach((series, index) => {
       const queryText = series.query; // This is the original query text
       const resolvedEntry = queryToResolved.get(queryText);
       
+      console.log(`Processing series ${index + 1}: "${queryText}"`);
+      console.log(`  - Found in resolved map: ${!!resolvedEntry}`);
+      console.log(`  - Query ID: ${resolvedEntry?.queryId || 'NOT FOUND'}`);
+      console.log(`  - Data points: ${series.data.length}`);
+      
       if (!resolvedEntry || !resolvedEntry.queryId) {
-        console.warn(`No query ID found for query: ${queryText}`);
+        console.warn(`  ⚠️ No query ID found for query: ${queryText}`);
         return;
       }
 
@@ -84,9 +110,17 @@ export async function POST(request: NextRequest) {
           value: p.value,
         })),
       });
+      
+      console.log(`  ✓ Added to interestOverTime`);
     });
 
-    console.log(`Returning ${interestOverTime.length} series for chart`);
+    console.log('=== FINAL RESULT ===');
+    console.log(`Total series in interestOverTime: ${interestOverTime.length}`);
+    console.log('Series details:', interestOverTime.map(s => ({
+      query: s.query,
+      window: s.window,
+      dataPoints: s.data.length
+    })));
 
     return NextResponse.json({
       success: true,

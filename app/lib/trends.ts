@@ -235,17 +235,30 @@ export async function getTrendData(
   includeRelated: boolean = true
 ): Promise<TrendResult> {
   const keywords = Array.isArray(keyword) ? keyword : [keyword];
+  
+  console.log('=== getTrendData called ===');
+  console.log('Keywords received:', JSON.stringify(keywords, null, 2));
+  console.log('Number of keywords:', keywords.length);
+  console.log('Windows:', windows);
+  
   const interestOverTime: InterestOverTimeResult[] = [];
 
   // Fetch interest over time for each window
   for (const window of windows) {
     try {
+      console.log(`Fetching ${window} data for keywords:`, keywords);
       const windowData = await getInterestOverTime(keywords, window);
+      console.log(`${window} returned ${windowData.length} series:`, windowData.map(s => ({
+        query: s.query,
+        dataPoints: s.data.length
+      })));
       interestOverTime.push(...windowData);
     } catch (error) {
       console.error(`Error fetching ${window} data:`, error);
     }
   }
+  
+  console.log(`Total interestOverTime series: ${interestOverTime.length}`);
 
   // Fetch regional interest (only for first keyword if multiple)
   let regionalInterest: RegionalInterest[] | undefined;
