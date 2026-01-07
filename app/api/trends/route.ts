@@ -22,6 +22,10 @@ export async function POST(request: NextRequest) {
 
     // Map query texts to query IDs
     const allQueries = storage.getAllQueries();
+    console.log('=== STORAGE STATE ===');
+    console.log('Total queries in storage:', allQueries.length);
+    console.log('Queries in storage:', allQueries.map(q => ({ id: q.id, text: q.text })));
+    
     const queryMap = new Map<string, string>(); // text -> id
     allQueries.forEach(q => {
       queryMap.set(q.text, q.id);
@@ -33,7 +37,13 @@ export async function POST(request: NextRequest) {
       queryId: queryMap.get(q), // Find the query ID
     }));
 
+    console.log('=== QUERY RESOLUTION ===');
     console.log('Resolved queries with IDs:', JSON.stringify(resolved, null, 2));
+    console.log('Query lookup results:', queries.map(q => ({
+      query: q,
+      found: queryMap.has(q),
+      queryId: queryMap.get(q)
+    })));
     console.log('Sending to getTrendData:', JSON.stringify(queries, null, 2));
 
     // Fetch trend data using original queries directly
@@ -86,22 +96,23 @@ export async function POST(request: NextRequest) {
       console.log(`  - Query ID: ${resolvedEntry?.queryId || 'NOT FOUND'}`);
       console.log(`  - Data points: ${series.data.length}`);
       
-      if (!resolvedEntry || !resolvedEntry.queryId) {
-        console.warn(`  ⚠️ No query ID found for query: ${queryText}`);
-        return;
+      // Store snapshots if we have a query ID, but still return data for charting
+      if (resolvedEntry?.queryId) {
+        // Store each data point as a TrendSnapshot
+        series.data.forEach(point => {
+          storage.addTrendSnapshot({
+            query_id: resolvedEntry.queryId!,
+            date: point.date instanceof Date ? point.date : new Date(point.date),
+            interest_value: point.value,
+            window: series.window as '30d' | '90d' | '12m',
+          });
+        });
+        console.log(`  ✓ Stored ${series.data.length} snapshots`);
+      } else {
+        console.warn(`  ⚠️ No query ID found - skipping snapshot storage but still returning chart data`);
       }
 
-      // Store each data point as a TrendSnapshot
-      series.data.forEach(point => {
-        storage.addTrendSnapshot({
-          query_id: resolvedEntry.queryId!,
-          date: point.date instanceof Date ? point.date : new Date(point.date),
-          interest_value: point.value,
-          window: series.window as '30d' | '90d' | '12m',
-        });
-      });
-
-      // Create a series entry with the original query text
+      // Always create a series entry for charting, even without query ID
       interestOverTime.push({
         query: queryText,
         window: series.window as '30d' | '90d' | '12m',
