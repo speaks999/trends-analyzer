@@ -5,6 +5,17 @@ import { generateQueries, QueryGenerationOptions } from '@/app/lib/openai';
 
 export async function POST(request: NextRequest) {
   try {
+    // Check if OpenAI API key is configured
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable.',
+        },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const options: QueryGenerationOptions = {
       count: body.count || 10,

@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrendData, TimeWindow, simplifyTrendsKeyword } from '@/app/lib/trends';
+import { storage } from '@/app/lib/storage';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,10 +16,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Map query texts to query IDs
+    const allQueries = storage.getAllQueries();
+    const queryMap = new Map<string, string>(); // text -> id
+    allQueries.forEach(q => {
+      queryMap.set(q.text, q.id);
+    });
+
     // Resolve each natural-language query into a Trends-friendly keyword
     const resolved = queries.map((q: string) => ({
       originalQuery: q,
       keywordUsed: simplifyTrendsKeyword(q),
+      queryId: queryMap.get(q), // Find the query ID
     }));
     const keywords = resolved.map(r => r.keywordUsed);
 
@@ -35,6 +44,35 @@ export async function POST(request: NextRequest) {
       console.error('Error in getTrendData:', error);
       throw error;
     }
+
+    // Store trend snapshots for scoring
+    // Create a map from keyword to query ID
+    const keywordToQueryId = new Map<string, string>();
+    resolved.forEach(r => {
+      if (r.queryId) {
+        keywordToQueryId.set(r.keywordUsed, r.queryId);
+      }
+    });
+
+    trendData.interestOverTime.forEach(series => {
+      const keyword = series.query; // This is the simplified keyword
+      const queryId = keywordToQueryId.get(keyword);
+      
+      if (!queryId) {
+        console.warn(`No query ID found for keyword: ${keyword}`);
+        return;
+      }
+
+      // Store each data point as a TrendSnapshot
+      series.data.forEach(point => {
+        storage.addTrendSnapshot({
+          query_id: queryId,
+          date: point.date instanceof Date ? point.date : new Date(point.date),
+          interest_value: point.value,
+          window: series.window as '30d' | '90d' | '12m',
+        });
+      });
+    });
 
     // Return chart-ready data to the client (client should NOT read server memory directly)
     const interestOverTime = trendData.interestOverTime.map(r => ({

@@ -207,6 +207,9 @@ export default function Home() {
               'Try a shorter keyword-like query (e.g. "cash flow issues", "customer acquisition cost").\n\n' +
               (resolved ? `Keyword simplification used:\n${resolved}` : '')
           );
+        } else {
+          // Recalculate scores now that we have trend data
+          await updateScores();
         }
       } else {
         alert('Failed to fetch trends: ' + (data.error || 'Unknown error'));
