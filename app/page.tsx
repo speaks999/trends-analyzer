@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { storage, Query, TrendSnapshot, TrendScore } from '@/app/lib/storage';
-import { calculateTOSForQueries, TrendScoreResult } from '@/app/lib/scoring';
+import { storage, Query } from '@/app/lib/storage';
 import { classifyIntents } from '@/app/lib/intent-classifier';
 import { clusterQueries, OpportunityCluster } from '@/app/lib/clustering';
 import { generateActions, Action } from '@/app/lib/actions';
@@ -12,16 +11,13 @@ import QueryList from '@/app/components/QueryList';
 import AISuggestions from '@/app/components/AISuggestions';
 import TrendsChart from '@/app/components/TrendsChart';
 import OpportunityClusters from '@/app/components/OpportunityClusters';
-import TrendScores from '@/app/components/TrendScores';
 import ActionsPanel from '@/app/components/ActionsPanel';
 import Recommendations from '@/app/components/Recommendations';
 
 export default function Home() {
   const [queries, setQueries] = useState<Query[]>([]);
   const [selectedQueryIds, setSelectedQueryIds] = useState<string[]>([]);
-  const [scores, setScores] = useState<Map<string, TrendScore>>(new Map());
   const [classifications, setClassifications] = useState<Map<string, import('@/app/lib/storage').IntentClassification>>(new Map());
-  const [scoreResults, setScoreResults] = useState<TrendScoreResult[]>([]);
   const [clusters, setClusters] = useState<OpportunityCluster[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
   const [trendSeries, setTrendSeries] = useState<
@@ -34,37 +30,6 @@ export default function Home() {
   useEffect(() => {
     loadQueries();
   }, []);
-
-  const updateScores = useCallback(async () => {
-    if (queries.length === 0) return;
-
-    try {
-      const queryIds = queries.map(q => q.id);
-      const response = await fetch('/api/score', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          queryIds,
-          window,
-        }),
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        const scoresMap = new Map<string, TrendScore>();
-        const allScores = storage.getAllTrendScores();
-        allScores.forEach(score => {
-          scoresMap.set(score.query_id, score);
-        });
-        setScores(scoresMap);
-        setScoreResults(data.scores);
-      }
-    } catch (error) {
-      console.error('Error updating scores:', error);
-    }
-  }, [queries, window]);
 
   const updateClusters = useCallback(async () => {
     if (queries.length === 0) return;
@@ -102,26 +67,17 @@ export default function Home() {
     }
   }, []);
 
-  // Update scores and clusters when queries change
+  // Update clusters when queries change
   useEffect(() => {
     if (queries.length > 0) {
-      updateScores();
       updateClusters();
       updateActions();
     }
-  }, [queries, updateScores, updateClusters, updateActions]);
+  }, [queries, updateClusters, updateActions]);
 
   const loadQueries = () => {
     const allQueries = storage.getAllQueries();
     setQueries(allQueries);
-    
-    // Load scores
-    const allScores = storage.getAllTrendScores();
-    const scoresMap = new Map<string, TrendScore>();
-    allScores.forEach(score => {
-      scoresMap.set(score.query_id, score);
-    });
-    setScores(scoresMap);
 
     // Load classifications
     const allClassifications = storage.getAllIntentClassifications();
@@ -207,9 +163,6 @@ export default function Home() {
               'Try a shorter keyword-like query (e.g. "cash flow issues", "customer acquisition cost").\n\n' +
               (resolved ? `Keyword simplification used:\n${resolved}` : '')
           );
-        } else {
-          // Recalculate scores now that we have trend data
-          await updateScores();
         }
       } else {
         alert('Failed to fetch trends: ' + (data.error || 'Unknown error'));
@@ -246,7 +199,6 @@ export default function Home() {
               <div className="mt-6">
                 <QueryList
                   queries={queries}
-                  scores={scores}
                   classifications={classifications}
                   onRemove={handleRemoveQuery}
                   onSelect={handleSelectQuery}
@@ -256,7 +208,7 @@ export default function Home() {
               {queries.length > 0 && selectedQueryIds.length === 0 && (
                 <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <p className="text-sm text-yellow-800">
-                    💡 <strong>Tip:</strong> Click on queries above to select them, then click &ldquo;Fetch Trends&rdquo; to see charts and scores.
+                    💡 <strong>Tip:</strong> Click on queries above to select them, then click &ldquo;Fetch Trends&rdquo; to see charts.
                   </p>
                 </div>
               )}
@@ -325,11 +277,6 @@ export default function Home() {
 
           {/* Right Column */}
           <div className="space-y-6">
-            {/* Scores */}
-            {scoreResults.length > 0 && (
-              <TrendScores scores={scoreResults} />
-            )}
-
             {/* Actions */}
             {actions.length > 0 && (
               <ActionsPanel actions={actions} />
