@@ -253,7 +253,7 @@ export default function Home() {
               {queries.length > 0 && selectedQueryIds.length === 0 && (
                 <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <p className="text-sm text-yellow-800">
-                    💡 <strong>Tip:</strong> Click on queries above to select them, then click "Fetch Trends" to see charts and scores.
+                    💡 <strong>Tip:</strong> Click on queries above to select them, then click &ldquo;Fetch Trends&rdquo; to see charts and scores.
                   </p>
                 </div>
               )}
@@ -275,7 +275,7 @@ export default function Home() {
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="text-center py-8">
                   <p className="text-gray-500 mb-2">No trend data yet.</p>
-                  <p className="text-sm text-gray-400">Click "Fetch Trends" above to load data for selected queries.</p>
+                  <p className="text-sm text-gray-400">Click &ldquo;Fetch Trends&rdquo; above to load data for selected queries.</p>
                 </div>
               </div>
             )}
