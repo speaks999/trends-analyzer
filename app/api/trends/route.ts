@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrendData, TimeWindow, GeoRegion } from '@/app/lib/trends';
 import { storage } from '@/app/lib/storage';
+import { calculateTOSForQueries } from '@/app/lib/scoring';
 
 export async function POST(request: NextRequest) {
   try {
@@ -138,6 +139,48 @@ export async function POST(request: NextRequest) {
       dataPoints: s.data.length
     })));
 
+    // Calculate TOS scores for all queries that have data
+    const queryIdsWithData = resolved
+      .filter(r => r.queryId)
+      .map(r => r.queryId!);
+    
+    let tosScores: Array<{ query_id: string; score: number; classification: string }> = [];
+    if (queryIdsWithData.length > 0) {
+      try {
+        // Calculate TOS for each time window
+        const windowsToCalculate: TimeWindow[] = ['30d', '90d', '12m'];
+        const allScores = windowsToCalculate.flatMap(window => 
+          calculateTOSForQueries(queryIdsWithData, window)
+        );
+        
+        // Store scores in storage
+        allScores.forEach(score => {
+          const storedScore = storage.getTrendScore(score.query_id);
+          // Only update if this window's score is higher or if no score exists
+          if (!storedScore || score.score > storedScore.score) {
+            storage.setTrendScore({
+              query_id: score.query_id,
+              score: score.score,
+              slope: score.breakdown.slope,
+              acceleration: score.breakdown.acceleration,
+              consistency: score.breakdown.consistency,
+              breadth: score.breakdown.breadth,
+              calculated_at: new Date(),
+            });
+          }
+        });
+
+        // Get the highest scores (using 12m window as primary)
+        tosScores = calculateTOSForQueries(queryIdsWithData, '12m').map(s => ({
+          query_id: s.query_id,
+          score: s.score,
+          classification: s.classification,
+        }));
+      } catch (error) {
+        console.error('Error calculating TOS scores:', error);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       resolved: resolved.map(r => ({ originalQuery: r.originalQuery, keywordUsed: r.originalQuery })),
@@ -145,6 +188,7 @@ export async function POST(request: NextRequest) {
         ...trendData,
         interestOverTime,
       },
+      tosScores, // Include TOS scores in response
     });
   } catch (error) {
     console.error('Error fetching trends:', error);

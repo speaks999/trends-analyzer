@@ -10,11 +10,15 @@ import QueryInput from '@/app/components/QueryInput';
 import QueryList from '@/app/components/QueryList';
 import AISuggestions from '@/app/components/AISuggestions';
 import TrendsChart from '@/app/components/TrendsChart';
+import TrendScores from '@/app/components/TrendScores';
 import OpportunityClusters from '@/app/components/OpportunityClusters';
 import ActionsPanel from '@/app/components/ActionsPanel';
 import Recommendations from '@/app/components/Recommendations';
+import { TrendScoreResult } from '@/app/lib/scoring';
+import AuthGuard from '@/app/components/AuthGuard';
+import UserMenu from '@/app/components/UserMenu';
 
-export default function Home() {
+function HomeContent() {
   const [queries, setQueries] = useState<Query[]>([]);
   const [classifications, setClassifications] = useState<Map<string, import('@/app/lib/storage').IntentClassification>>(new Map());
   const [clusters, setClusters] = useState<OpportunityCluster[]>([]);
@@ -22,6 +26,7 @@ export default function Home() {
   const [trendSeries, setTrendSeries] = useState<
     Array<{ query: string; window: '30d' | '90d' | '12m'; data: Array<{ date: string; value: number }> }>
   >([]);
+  const [trendScores, setTrendScores] = useState<TrendScoreResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [window, setWindow] = useState<'30d' | '90d' | '12m'>('12m');
 
@@ -140,6 +145,19 @@ export default function Home() {
         const interestOverTime = data.data?.interestOverTime || [];
         setTrendSeries(interestOverTime);
 
+        // Load TOS scores from response and fetch full details
+        try {
+          const scoreResponse = await fetch('/api/score?window=12m');
+          const scoreData = await scoreResponse.json();
+          if (scoreData.success && scoreData.scores) {
+            // Sort by score descending to show highest ranking terms first
+            const sortedScores = scoreData.scores.sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
+            setTrendScores(sortedScores);
+          }
+        } catch (error) {
+          console.error('Error fetching detailed scores:', error);
+        }
+
         const totalPoints = interestOverTime.reduce((sum: number, s: any) => sum + (s.data?.length || 0), 0);
         if (totalPoints === 0) {
           alert(
@@ -160,13 +178,37 @@ export default function Home() {
     }
   };
 
+  // Load TOS scores on component mount and when queries change
+  useEffect(() => {
+    const loadTrendScores = async () => {
+      try {
+        const response = await fetch('/api/score?window=12m');
+        const data = await response.json();
+        if (data.success && data.scores && data.scores.length > 0) {
+          // Sort by score descending - highest ranking terms first
+          const sortedScores = data.scores.sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
+          setTrendScores(sortedScores);
+        }
+      } catch (error) {
+        console.error('Error loading trend scores:', error);
+      }
+    };
+
+    if (queries.length > 0) {
+      loadTrendScores();
+    }
+  }, [queries.length]);
+
 
   const recommendations = getAllRecommendations();
 
   return (
     <main className="min-h-screen p-4 md:p-8 bg-gray-50">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl md:text-4xl font-bold mb-6 md:mb-8">Entrepreneur Demand & Trend Intelligence System</h1>
+        <div className="flex items-center justify-between mb-6 md:mb-8">
+          <h1 className="text-3xl md:text-4xl font-bold">Entrepreneur Demand & Trend Intelligence System</h1>
+          <UserMenu />
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
           {/* Left Column */}
@@ -246,6 +288,14 @@ export default function Home() {
 
           {/* Right Column */}
           <div className="space-y-6">
+            {/* Trend Scores (TOS) */}
+            {trendScores.length > 0 && (
+              <TrendScores 
+                scores={trendScores} 
+                queries={new Map(queries.map(q => [q.id, q.text]))}
+              />
+            )}
+            
             {/* Actions */}
             {actions.length > 0 && (
               <ActionsPanel actions={actions} />
@@ -254,5 +304,13 @@ export default function Home() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthGuard>
+      <HomeContent />
+    </AuthGuard>
   );
 }

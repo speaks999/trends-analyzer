@@ -1,4 +1,5 @@
 // In-memory data storage for the trends analyzer
+// For database-backed storage, see storage-db.ts and migration guide
 
 export interface Query {
   id: string;
@@ -178,6 +179,7 @@ class Storage {
   }
 }
 
-// Singleton instance
+// Singleton instance (in-memory storage)
+// To use Supabase database storage, see MIGRATION_GUIDE.md
 export const storage = new Storage();
 

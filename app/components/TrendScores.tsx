@@ -5,9 +5,10 @@ import { TrendScoreResult } from '@/app/lib/scoring';
 
 interface TrendScoresProps {
   scores: TrendScoreResult[];
+  queries?: Map<string, string>; // Optional map of query_id -> query_text
 }
 
-export default function TrendScores({ scores }: TrendScoresProps) {
+export default function TrendScores({ scores, queries }: TrendScoresProps) {
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600';
     if (score >= 60) return 'text-blue-600';
@@ -36,20 +37,31 @@ export default function TrendScores({ scores }: TrendScoresProps) {
 
   return (
     <div className="border rounded-lg p-4">
-      <h2 className="text-xl font-bold mb-4">Trend Scores (TOS)</h2>
+      <h2 className="text-xl font-bold mb-2">Trend Opportunity Scores (TOS)</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        Rankings based on trend momentum, acceleration, consistency, and breadth over the last 12 months
+      </p>
       <div className="space-y-3">
         {scores
           .sort((a, b) => b.score - a.score)
-          .map(score => (
+          .map((score, index) => (
             <div key={score.query_id} className="border rounded p-3">
               <div className="flex items-center justify-between mb-2">
-                <span className={`text-2xl font-bold ${getScoreColor(score.score)}`}>
-                  {score.score}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-500">#{index + 1}</span>
+                  <span className={`text-2xl font-bold ${getScoreColor(score.score)}`}>
+                    {score.score}
+                  </span>
+                </div>
                 <span className={`px-2 py-1 rounded text-xs font-semibold ${getClassificationColor(score.classification)}`}>
                   {score.classification.toUpperCase()}
                 </span>
               </div>
+              {queries && queries.has(score.query_id) && (
+                <div className="text-sm text-gray-700 mb-2 font-medium">
+                  {queries.get(score.query_id)}
+                </div>
+              )}
               <div className="grid grid-cols-4 gap-2 text-sm">
                 <div>
                   <span className="text-gray-600">Slope:</span>

@@ -55,6 +55,20 @@ function getSerpApiDate(window: TimeWindow): string {
 
 /**
  * Fetch interest over time for a query using SerpApi
+ * 
+ * IMPORTANT: When multiple keywords are provided, they are queried together in a single API call.
+ * Google Trends normalizes the results relative to each other - the term with the highest 
+ * average interest gets a score of 100, and other terms are scaled relative to it.
+ * 
+ * This means:
+ * - Scores are relative within the comparison set, not absolute search volumes
+ * - A term with score 50 means it has half the average interest of the highest-scoring term
+ * - To compare terms properly, always query them together in the same call
+ * 
+ * @param keyword - Single keyword or array of keywords to compare
+ * @param window - Time window for the data
+ * @param geo - Geographic region
+ * @returns Array of InterestOverTimeResult, one per keyword
  */
 export async function getInterestOverTime(
   keyword: string | string[],
@@ -276,6 +290,17 @@ export async function getRelatedQueries(
 
 /**
  * Fetch comprehensive trend data for a query
+ * 
+ * CRITICAL: When multiple keywords are provided, they are ALL queried together in each API call.
+ * This ensures Google Trends normalizes them relative to each other, enabling proper comparison.
+ * 
+ * For each time window and region combination:
+ * - All keywords are sent in a single API call
+ * - Google Trends returns normalized scores where the highest-scoring term gets 100
+ * - Other terms are scaled relative to that peak
+ * 
+ * This means scores are comparable WITHIN each window/region combination, but may vary
+ * across different time windows or regions (as search patterns change).
  */
 export async function getTrendData(
   keyword: string | string[],
@@ -291,14 +316,17 @@ export async function getTrendData(
   console.log('Number of keywords:', keywords.length);
   console.log('Windows:', windows);
   console.log('Regions:', regions);
+  console.log('NOTE: All keywords will be queried together for proper comparison within each window/region');
   
   const interestOverTime: InterestOverTimeResult[] = [];
 
   // Fetch interest over time for each window and region
+  // IMPORTANT: All keywords are passed together in each call to ensure proper normalization
   for (const region of regions) {
     for (const window of windows) {
       try {
         console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${region})`);
+        // All keywords queried together = normalized relative to each other
         const windowData = await getInterestOverTime(keywords, window, region);
         console.log(`${window} (${region}) returned ${windowData.length} series:`, windowData.map(s => ({
           query: s.query,
@@ -345,6 +373,12 @@ export async function getTrendData(
 
 /**
  * Normalize trend data to 0-100 scale (already normalized by Google Trends, but ensure consistency)
+ * 
+ * IMPORTANT: Google Trends data is already normalized:
+ * - When multiple terms are queried together, they are normalized relative to each other
+ * - The term with highest average interest gets 100, others are scaled relative to it
+ * - This allows for proper comparison between terms in the same query
+ * - Do NOT re-normalize data that comes from a multi-term query, as it breaks the relative comparison
  */
 export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
   if (data.length === 0) return data;
@@ -352,12 +386,64 @@ export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
   const maxValue = Math.max(...data.map(d => d.value));
   if (maxValue === 0) return data;
 
-  // If already normalized (max is 100), return as is
+  // Google Trends already normalizes to 0-100 when terms are queried together
+  // Only normalize if values are clearly outside this range (likely an error or different source)
   if (maxValue <= 100) return data;
 
-  // Otherwise normalize
+  // Otherwise normalize (shouldn't happen with proper Google Trends data)
   return data.map(point => ({
     ...point,
     value: (point.value / maxValue) * 100,
   }));
+}
+
+/**
+ * Normalize multiple trend series relative to each other for proper comparison
+ * This ensures that when comparing terms from different API calls, they are normalized
+ * relative to the highest value across all series in the same time window and region.
+ * 
+ * CRITICAL: This should only be used when terms were NOT queried together in the same API call.
+ * When terms are queried together, Google Trends already normalizes them correctly.
+ */
+export function normalizeSeriesRelative(
+  series: InterestOverTimeResult[],
+  window: TimeWindow,
+  geo?: string
+): InterestOverTimeResult[] {
+  // Only normalize series that match the same window and region
+  const filteredSeries = series.filter(s => 
+    s.window === window && (geo ? s.geo === geo : true)
+  );
+
+  if (filteredSeries.length <= 1) {
+    // No need to normalize if there's only one or no series
+    return series;
+  }
+
+  // Find the maximum value across all data points in these series
+  let globalMax = 0;
+  filteredSeries.forEach(s => {
+    s.data.forEach(point => {
+      if (point.value > globalMax) {
+        globalMax = point.value;
+      }
+    });
+  });
+
+  if (globalMax === 0) return series;
+
+  // Normalize all series relative to the global max
+  // This ensures proper comparison when terms were queried separately
+  return series.map(s => {
+    if (s.window === window && (geo ? s.geo === geo : true)) {
+      return {
+        ...s,
+        data: s.data.map(point => ({
+          ...point,
+          value: (point.value / globalMax) * 100,
+        })),
+      };
+    }
+    return s;
+  });
 }
