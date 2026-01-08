@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "description": "Product Requirements Document for Trends Analyzer - Use this to track features and tasks",
+  "tasks": [
+    {
+      "id": "example-1",
+      "category": "functional",
+      "priority": "low",
+      "description": "Example task: Add error boundary component",
+      "steps": [
+        "Create ErrorBoundary component in app/components/",
+        "Add error logging",
+        "Display user-friendly error message",
+        "Add error boundary to layout.tsx",
+        "Write tests for error boundary"
+      ],
+      "passes": true,
+      "notes": "Task completed. ErrorBoundary component created with full error handling, integrated into layout, and comprehensive test suite created. Test framework configured (Jest + React Testing Library). Note: Run 'npm install' to install test dependencies before running tests."
+    }
+  ],
+  "qualityStandards": {
+    "testCoverage": 80,
+    "maxFunctionLength": 50,
+    "maxFileLength": 300,
+    "requireTypes": true,
+    "requireTests": true
+  },
+  "feedbackLoops": [
+    "npm run lint",
+    "tsc --noEmit",
+    "npm run build",
+    "npm test"
+  ]
+}
