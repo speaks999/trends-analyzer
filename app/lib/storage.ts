@@ -17,7 +17,7 @@ export interface TrendSnapshot {
   date: Date;
   interest_value: number;
   region?: string;
-  window: '30d';
+  window: '90d';
 }
 
 export interface TrendScore {
@@ -28,7 +28,7 @@ export interface TrendScore {
   consistency: number;
   breadth: number;
   calculated_at: Date;
-  window?: '30d'; // Optional window for historical tracking
+  window?: '90d'; // Optional window for historical tracking
 }
 
 export interface OpportunityCluster {
@@ -105,7 +105,7 @@ class Storage {
     this.trendSnapshots.push(snapshot);
   }
 
-  getTrendSnapshots(queryId: string, window?: '30d'): TrendSnapshot[] {
+  getTrendSnapshots(queryId: string, window?: '90d'): TrendSnapshot[] {
     let snapshots = this.trendSnapshots.filter(s => s.query_id === queryId);
     if (window) {
       snapshots = snapshots.filter(s => s.window === window);
@@ -113,7 +113,7 @@ class Storage {
     return snapshots.sort((a, b) => a.date.getTime() - b.date.getTime());
   }
 
-  getLatestSnapshot(queryId: string, window: '30d'): TrendSnapshot | undefined {
+  getLatestSnapshot(queryId: string, window: '90d'): TrendSnapshot | undefined {
     const snapshots = this.getTrendSnapshots(queryId, window);
     return snapshots[snapshots.length - 1];
   }

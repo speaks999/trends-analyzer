@@ -1,6 +1,6 @@
 // Google Trends API wrapper using SerpApi
 
-export type TimeWindow = '30d';
+export type TimeWindow = '90d';
 export type GeoRegion = 'US';
 
 export interface TrendsKeywordResolution {
@@ -41,8 +41,8 @@ export interface TrendResult {
  * Convert time window to SerpApi date format
  */
 function getSerpApiDate(window: TimeWindow): string {
-  // Only 30d window supported
-  return 'today 1-m'; // 1 month = ~30 days
+  // Only 90d window supported
+  return 'today 3-m'; // 3 months = ~90 days
 }
 
 /**
@@ -64,7 +64,7 @@ function getSerpApiDate(window: TimeWindow): string {
  */
 export async function getInterestOverTime(
   keyword: string | string[],
-  window: TimeWindow = '30d',
+  window: TimeWindow = '90d',
   geo: GeoRegion = 'US'
 ): Promise<InterestOverTimeResult[]> {
   const apiKey = process.env.SERPAPI_API_KEY;
@@ -340,7 +340,7 @@ export async function getRelatedQueries(
  */
 export async function getTrendData(
   keyword: string | string[],
-  windows: TimeWindow[] = ['30d'],
+  windows: TimeWindow[] = ['90d'],
   includeRegional: boolean = true,
   includeRelated: boolean = true,
   regions: GeoRegion[] = ['US'],

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);
     const { searchParams } = new URL(request.url);
-    const window = (searchParams.get('window') || '30d') as '30d';
+    const window = (searchParams.get('window') || '90d') as '90d';
     const limit = parseInt(searchParams.get('limit') || '10');
     const useAI = searchParams.get('useAI') !== 'false'; // Default to true
 

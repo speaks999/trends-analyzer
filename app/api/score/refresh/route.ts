@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);
     const body = await request.json();
-    const { window = '30d' as '30d', limit } = body;
+    const { window = '90d' as '90d', limit } = body;
 
     // Get all queries for the current user
     const allQueries = await storage.getAllQueries();
@@ -24,8 +24,8 @@ export async function POST(request: NextRequest) {
 
     const queryIds = allQueries.map(q => q.id);
 
-    // Calculate TOS for all queries (30d window only)
-    const scores = await calculateTOSForQueries(queryIds, '30d');
+    // Calculate TOS for all queries (90d window only)
+    const scores = await calculateTOSForQueries(queryIds, '90d', storage);
     
     // Store all scores in database
     for (const score of scores) {
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
         consistency: score.breakdown.consistency,
         breadth: score.breakdown.breadth,
         calculated_at: new Date(),
-        window: '30d',
+        window: '90d',
       });
     }
 
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Recalculated scores for ${queryIds.length} queries (30d window)`,
+      message: `Recalculated scores for ${queryIds.length} queries (90d window)`,
       totalQueries: queryIds.length,
       topQueries: topQueries.map(s => ({
         query_id: s.query_id,
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);
     const { searchParams } = new URL(request.url);
-    const window = (searchParams.get('window') || '30d') as '30d';
+    const window = (searchParams.get('window') || '90d') as '90d';
     const limit = parseInt(searchParams.get('limit') || '50');
 
     // Get top ranked queries

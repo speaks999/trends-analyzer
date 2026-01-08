@@ -24,7 +24,7 @@ export interface FeatureRecommendation {
  * Calculate a simple interest score based on trend data
  */
 async function calculateInterestScore(queryId: string): Promise<number> {
-  const snapshots = await storage.getTrendSnapshots(queryId, '30d');
+  const snapshots = await storage.getTrendSnapshots(queryId, '90d');
   
   if (snapshots.length === 0) return 0;
 
@@ -73,7 +73,7 @@ export async function generateTutorialRecommendations(
     // Score each query based on trend data
     const scoredQueries = await Promise.all(
     allQueries.map(async (query) => {
-      const snapshots = await storage.getTrendSnapshots(query.id, '30d');
+      const snapshots = await storage.getTrendSnapshots(query.id, '90d');
       if (snapshots.length === 0) return null;
 
       const score = await calculateInterestScore(query.id);
@@ -148,7 +148,7 @@ export async function generateFeatureRecommendations(
         // Calculate average interest score for queries in cluster
         const queryScores = await Promise.all(
           cluster.queries.map(async (queryId) => {
-            const snapshots = await storage.getTrendSnapshots(queryId, '30d');
+            const snapshots = await storage.getTrendSnapshots(queryId, '90d');
             return snapshots.length > 0 ? await calculateInterestScore(queryId) : 0;
           })
         );

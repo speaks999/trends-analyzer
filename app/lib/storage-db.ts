@@ -160,7 +160,7 @@ export class DatabaseStorage {
     }
   }
 
-  async getTrendSnapshots(queryId: string, window?: '30d', region?: string): Promise<TrendSnapshot[]> {
+  async getTrendSnapshots(queryId: string, window?: '90d', region?: string): Promise<TrendSnapshot[]> {
     let query = this.supabase
       .from('trend_snapshots')
       .select()
@@ -185,12 +185,12 @@ export class DatabaseStorage {
   }
 
   // Check if we have cached data for a query/window/region combination
-  async hasCachedTrendData(queryId: string, window: '30d', region: string): Promise<boolean> {
+  async hasCachedTrendData(queryId: string, window: '90d', region: string): Promise<boolean> {
     const snapshots = await this.getTrendSnapshots(queryId, window, region);
     
     // Consider data cached if we have at least some data points
-    // For 30d: expect ~30 points
-    const minExpectedPoints = 25;
+    // For 90d: expect ~90 points (daily) or ~13 points (weekly)
+    const minExpectedPoints = 75; // 90d window - adjust based on SerpAPI granularity
     
     return snapshots.length >= minExpectedPoints;
   }
@@ -198,7 +198,7 @@ export class DatabaseStorage {
   // Batch check if multiple queries have cached data for a window/region combination
   async batchHasCachedTrendData(
     queryIdMap: Map<string, string>,
-    window: '30d',
+    window: '90d',
     region: string
   ): Promise<Map<string, boolean>> {
     const results = new Map<string, boolean>();
@@ -231,7 +231,7 @@ export class DatabaseStorage {
     });
 
     // Determine if each query has enough cached data
-    const minExpectedPoints = 25; // 30d window
+    const minExpectedPoints = 75; // 90d window - adjust based on SerpAPI granularity
     
     queryIdMap.forEach((queryId, queryText) => {
       const count = snapshotCounts.get(queryId) || 0;
@@ -245,9 +245,9 @@ export class DatabaseStorage {
   async getCachedTrendData(
     queryText: string,
     queryId: string,
-    window: '30d',
+    window: '90d',
     region: string
-  ): Promise<{ query: string; data: Array<{ date: Date; value: number }>; window: '30d'; geo?: string } | null> {
+  ): Promise<{ query: string; data: Array<{ date: Date; value: number }>; window: '90d'; geo?: string } | null> {
     const snapshots = await this.getTrendSnapshots(queryId, window, region);
     
     if (snapshots.length === 0) {
@@ -269,7 +269,7 @@ export class DatabaseStorage {
     };
   }
 
-  async getLatestSnapshot(queryId: string, window: '30d'): Promise<TrendSnapshot | undefined> {
+  async getLatestSnapshot(queryId: string, window: '90d'): Promise<TrendSnapshot | undefined> {
     try {
       const { data, error } = await this.supabase
         .from('trend_snapshots')
@@ -289,8 +289,8 @@ export class DatabaseStorage {
   }
 
   // Trend score management
-  async setTrendScore(score: TrendScore & { window?: '30d' }): Promise<void> {
-    const window = score.window || '30d';
+  async setTrendScore(score: TrendScore & { window?: '90d' }): Promise<void> {
+    const window = score.window || '90d';
     
     const { error } = await this.supabase
       .from('trend_scores')
@@ -313,7 +313,7 @@ export class DatabaseStorage {
     }
   }
 
-  async getTrendScore(queryId: string, window: '30d' = '30d'): Promise<TrendScore | undefined> {
+  async getTrendScore(queryId: string, window: '90d' = '90d'): Promise<TrendScore | undefined> {
     try {
       const { data, error } = await this.supabase
         .from('trend_scores')
@@ -332,7 +332,7 @@ export class DatabaseStorage {
     }
   }
 
-  async getAllTrendScores(window: '30d' = '30d'): Promise<TrendScore[]> {
+  async getAllTrendScores(window: '90d' = '90d'): Promise<TrendScore[]> {
     const userId = await this.getCurrentUserId();
     
     // First get all query IDs for this user
@@ -364,7 +364,7 @@ export class DatabaseStorage {
   }
 
   // Get top ranked queries by TOS score for a specific window
-  async getTopRankedQueries(limit: number = 10, window: '30d' = '30d', minScore: number = 0): Promise<TrendScore[]> {
+  async getTopRankedQueries(limit: number = 10, window: '90d' = '90d', minScore: number = 0): Promise<TrendScore[]> {
     const userId = await this.getCurrentUserId();
     
     // First get all query IDs for this user
@@ -827,7 +827,7 @@ export class DatabaseStorage {
       consistency: parseFloat(row.consistency),
       breadth: parseFloat(row.breadth),
       calculated_at: new Date(row.calculated_at),
-      window: row.window || '30d',
+      window: row.window || '90d',
     };
   }
 

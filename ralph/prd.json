@@ -72,6 +72,26 @@
       ],
       "passes": true,
       "notes": "Task completed. Created generateClusterTutorialRecommendationsAI function with cluster-focused OpenAI prompt. Added /api/cluster/recommendations endpoint. Updated OpportunityClusters component with Generate Tutorials button per cluster. Added expandable UI to display tutorials. Tutorials are personalized using entrepreneur profile and address cluster theme holistically. Type checking and linting passed."
+    },
+    {
+      "id": "tos-component-25-points",
+      "category": "functional",
+      "priority": "high",
+      "description": "Normalize each TOS component (slope, acceleration, consistency, breadth) to 0-25 scale so total score is out of 100",
+      "steps": [
+        "Update calculateSlope to return 0-25 instead of 0-100 (divide by 4)",
+        "Update calculateAcceleration to return 0-25 instead of 0-100 (use raw slopes for difference, then normalize to 0-25)",
+        "Update calculateConsistency to return 0-25 instead of 0-100 (divide by 4)",
+        "Update calculateBreadth to return 0-25 instead of 0-100 (divide by 4)",
+        "Update calculateTOS to sum components instead of averaging (slope + acceleration + consistency + breadth)",
+        "Update default consistency value from 50 to 0 when no data",
+        "Update TrendScores component to show total score beside ranking number (e.g., '#1 75/100')",
+        "Update TrendScores component to show '/25' for each component (e.g., 'Slope: 20/25')",
+        "Update subtitle to say '30 days' instead of '12 months'",
+        "Run type checking and build to verify changes"
+      ],
+      "passes": true,
+      "notes": "Task completed. All TOS components now return 0-25 scale. TOS calculation sums components (not averages) to get 0-100 total. Updated display to show total score beside ranking number and '/25' for each component. Updated subtitle to reflect 30-day window. Type checking passed."
     }
   ],
   "qualityStandards": {

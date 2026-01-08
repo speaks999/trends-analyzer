@@ -36,8 +36,9 @@ function calculateSlope(data: TrendDataPoint[]): number {
 
   const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
 
-  // Normalize to 0-100 scale (assuming max reasonable slope is 10)
-  return Math.max(0, Math.min(100, (slope + 10) * 5));
+  // Normalize to 0-25 scale (assuming max reasonable slope is 10)
+  // Each component contributes max 25 points to the total score
+  return Math.max(0, Math.min(25, ((slope + 10) * 5) / 4));
 }
 
 /**
@@ -51,21 +52,36 @@ function calculateAcceleration(data: TrendDataPoint[]): number {
   const firstHalf = data.slice(0, mid);
   const secondHalf = data.slice(mid);
 
-  const slope1 = calculateSlope(firstHalf);
-  const slope2 = calculateSlope(secondHalf);
+  // Calculate slopes using linear regression directly (not normalized)
+  const calcRawSlope = (points: TrendDataPoint[]) => {
+    if (points.length < 2) return 0;
+    const n = points.length;
+    const x = points.map((_, i) => i);
+    const y = points.map(d => d.value);
+    const sumX = x.reduce((a, b) => a + b, 0);
+    const sumY = y.reduce((a, b) => a + b, 0);
+    const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+    const sumXX = x.reduce((sum, xi) => sum + xi * xi, 0);
+    return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  };
+
+  const slope1 = calcRawSlope(firstHalf);
+  const slope2 = calcRawSlope(secondHalf);
 
   // Acceleration is the change in slope
   const acceleration = slope2 - slope1;
 
-  // Normalize to 0-100 scale
-  return Math.max(0, Math.min(100, (acceleration + 20) * 2.5));
+  // Normalize to 0-25 scale
+  // Each component contributes max 25 points to the total score
+  // Map acceleration range (-20 to +20) to 0-25 scale
+  return Math.max(0, Math.min(25, ((acceleration + 20) / 40) * 25));
 }
 
 /**
  * Calculate consistency (sustained growth vs spikes)
  */
 function calculateConsistency(data: TrendDataPoint[]): number {
-  if (data.length < 3) return 50; // Default to neutral
+  if (data.length < 3) return 0; // Default to 0 instead of 50/4 = 12.5
 
   // Calculate variance in the trend
   const values = data.map(d => d.value);
@@ -74,9 +90,11 @@ function calculateConsistency(data: TrendDataPoint[]): number {
   const stdDev = Math.sqrt(variance);
 
   // Lower variance = higher consistency
-  // Normalize: if stdDev is 0, consistency is 100; if stdDev is high, consistency is lower
+  // Normalize: if stdDev is 0, consistency is 25; if stdDev is high, consistency is lower
+  // Each component contributes max 25 points to the total score
   const maxStdDev = 50; // Reasonable max for normalized 0-100 data
-  const consistency = Math.max(0, Math.min(100, 100 - (stdDev / maxStdDev) * 100));
+  const consistency100 = 100 - (stdDev / maxStdDev) * 100; // Calculate on 0-100 scale first
+  const consistency = Math.max(0, Math.min(25, consistency100 / 4)); // Convert to 0-25 scale
 
   return consistency;
 }
@@ -84,9 +102,10 @@ function calculateConsistency(data: TrendDataPoint[]): number {
 /**
  * Calculate breadth (number of regions with meaningful interest)
  */
-async function calculateBreadth(queryId: string, window?: '30d'): Promise<number> {
+async function calculateBreadth(queryId: string, window?: '90d', storageInstance?: DatabaseStorage): Promise<number> {
   // Get all snapshots for this query
-  const snapshots = await storage.getTrendSnapshots(queryId, window);
+  const storageToUse = storageInstance || storage;
+  const snapshots = await storageToUse.getTrendSnapshots(queryId, window);
   
   if (snapshots.length === 0) return 0;
 
@@ -97,29 +116,32 @@ async function calculateBreadth(queryId: string, window?: '30d'): Promise<number
       .map(s => s.region!)
   );
 
-  // Normalize: assume max reasonable regions is 20
-  return Math.min(100, (regions.size / 20) * 100);
+  // Normalize to 0-25 scale: assume max reasonable regions is 20
+  // Each component contributes max 25 points to the total score
+  const breadth100 = (regions.size / 20) * 100; // Calculate on 0-100 scale first
+  return Math.min(25, breadth100 / 4); // Convert to 0-25 scale
 }
 
 /**
  * Calculate Trend Opportunity Score (TOS)
  */
-export async function calculateTOS(queryId: string, window: '30d' = '30d'): Promise<TrendScoreResult> {
+export async function calculateTOS(queryId: string, window: '90d' = '90d', storageInstance?: DatabaseStorage): Promise<TrendScoreResult> {
   // Get trend snapshots for the specified window
-  const snapshots = await storage.getTrendSnapshots(queryId, window);
+  const storageToUse = storageInstance || storage;
+  const snapshots = await storageToUse.getTrendSnapshots(queryId, window);
   
   if (snapshots.length === 0) {
-    return {
-      query_id: queryId,
-      score: 0,
-      breakdown: {
-        slope: 0,
-        acceleration: 0,
-        consistency: 50,
-        breadth: 0,
-      },
-      classification: 'declining',
-    };
+      return {
+        query_id: queryId,
+        score: 0,
+        breakdown: {
+          slope: 0,
+          acceleration: 0,
+          consistency: 0, // Default to 0 instead of 50/4 = 12.5
+          breadth: 0,
+        },
+        classification: 'declining',
+      };
   }
 
   // Convert snapshots to TrendDataPoint format
@@ -128,17 +150,17 @@ export async function calculateTOS(queryId: string, window: '30d' = '30d'): Prom
     value: s.interest_value,
   }));
 
-  // Calculate individual metrics (all on 0-100 scale)
+  // Calculate individual metrics (all on 0-25 scale - each contributes up to 25 points)
   const slope = calculateSlope(data);
   const acceleration = calculateAcceleration(data);
   const consistency = calculateConsistency(data);
-  const breadth = await calculateBreadth(queryId, window);
+  const breadth = await calculateBreadth(queryId, window, storageInstance);
 
-  // Calculate TOS with equal weighting (0-100 scale)
-  // TOS = (Slope + Acceleration + Consistency + Breadth) / 4
-  // All components are already on 0-100 scale, so simple average
+  // Calculate TOS by summing components (each out of 25, total out of 100)
+  // TOS = Slope + Acceleration + Consistency + Breadth
+  // Each component is normalized to 0-25 scale, so sum gives 0-100 total
   const score = Math.round(
-    (slope + acceleration + consistency + breadth) / 4
+    slope + acceleration + consistency + breadth
   );
 
   // Classify score
@@ -171,9 +193,10 @@ export async function calculateTOS(queryId: string, window: '30d' = '30d'): Prom
  */
 export async function calculateTOSForQueries(
   queryIds: string[],
-  window: '30d' = '30d'
+  window: '90d' = '90d',
+  storageInstance?: DatabaseStorage
 ): Promise<TrendScoreResult[]> {
-  return Promise.all(queryIds.map(id => calculateTOS(id, window)));
+  return Promise.all(queryIds.map(id => calculateTOS(id, window, storageInstance)));
 }
 
 /**
@@ -181,7 +204,7 @@ export async function calculateTOSForQueries(
  */
 export async function getTopQueriesByTOS(
   limit: number = 10,
-  window: '30d' = '30d',
+  window: '90d' = '90d',
   minScore: number = 0,
   storageInstance?: DatabaseStorage
 ): Promise<TrendScoreResult[]> {

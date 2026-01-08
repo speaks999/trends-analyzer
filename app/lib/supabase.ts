@@ -75,7 +75,7 @@ export interface Database {
           date: string;
           interest_value: number;
           region: string | null;
-          window: '30d';
+          window: '90d';
           created_at: string;
         };
         Insert: {
@@ -84,7 +84,7 @@ export interface Database {
           date: string;
           interest_value: number;
           region?: string | null;
-          window: '30d';
+          window: '90d';
           created_at?: string;
         };
         Update: {
@@ -93,7 +93,7 @@ export interface Database {
           date?: string;
           interest_value?: number;
           region?: string | null;
-          window?: '30d';
+          window?: '90d';
           created_at?: string;
         };
       };
@@ -106,7 +106,7 @@ export interface Database {
           acceleration: number;
           consistency: number;
           breadth: number;
-          window: '30d' | null;
+          window: '90d' | null;
           calculated_at: string;
         };
         Insert: {
@@ -117,7 +117,7 @@ export interface Database {
           acceleration: number;
           consistency: number;
           breadth: number;
-          window?: '30d' | null;
+          window?: '90d' | null;
           calculated_at?: string;
         };
         Update: {
@@ -128,7 +128,7 @@ export interface Database {
           acceleration?: number;
           consistency?: number;
           breadth?: number;
-          window?: '30d' | null;
+          window?: '90d' | null;
           calculated_at?: string;
         };
       };

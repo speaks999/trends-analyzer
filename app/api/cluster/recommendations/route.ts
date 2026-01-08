@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate TOS scores for cluster queries
     const queryIds = clusterQueries.map(q => q.id);
-    const scores = await calculateTOSForQueries(queryIds, '30d');
+    const scores = await calculateTOSForQueries(queryIds, '90d', storage);
     const scoreMap = new Map(scores.map(s => [s.query_id, s]));
 
     // Format queries with scores for AI function

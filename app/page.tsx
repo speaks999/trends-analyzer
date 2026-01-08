@@ -12,7 +12,7 @@ import TrendsChart from '@/app/components/TrendsChart';
 import TrendScores from '@/app/components/TrendScores';
 import OpportunityClusters from '@/app/components/OpportunityClusters';
 import ActionsPanel from '@/app/components/ActionsPanel';
-import Recommendations from '@/app/components/Recommendations';
+// Recommendations component removed - recommendations now shown in cluster cards
 import { TrendScoreResult } from '@/app/lib/scoring';
 import AuthGuard from '@/app/components/AuthGuard';
 import UserMenu from '@/app/components/UserMenu';
@@ -37,7 +37,7 @@ function HomeContent() {
   const [clusters, setClusters] = useState<OpportunityCluster[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
   const [trendSeries, setTrendSeries] = useState<
-    Array<{ query: string; window: '30d'; data: Array<{ date: string; value: number }> }>
+    Array<{ query: string; window: '90d'; data: Array<{ date: string; value: number }> }>
   >([]);
   const [trendScores, setTrendScores] = useState<TrendScoreResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,7 +121,7 @@ function HomeContent() {
 
   const loadTrendScores = async () => {
     try {
-      const response = await fetch(`/api/score?window=30d`, {
+      const response = await fetch(`/api/score?window=90d`, {
         headers: getAuthHeaders(),
       });
       const data = await response.json();
@@ -145,7 +145,7 @@ function HomeContent() {
       const response = await fetch('/api/score/refresh', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ window: '30d' }), // Fixed: use literal '30d' instead of undefined window variable
+        body: JSON.stringify({ window: '90d' }), // Use 90-day window
       });
       const data = await response.json();
       if (data.success && data.topQueries) {
@@ -208,7 +208,7 @@ function HomeContent() {
         headers: getAuthHeaders(),
         body: JSON.stringify({
           queries: queryTexts,
-          windows: ['30d'],
+          windows: ['90d'],
           includeRegional: true,
           includeRelated: true,
           regions: ['US'], // Request data for United States only
@@ -263,7 +263,7 @@ function HomeContent() {
     }
   };
 
-  // Note: Window selection removed - we only use 30d now
+  // Note: Window selection removed - we only use 90d now
   // Removed useEffect that depended on window variable since it doesn't exist
 
   // Load AI-powered recommendations when queries change (only if we have queries)
@@ -272,7 +272,7 @@ function HomeContent() {
       if (queries.length > 0 && session) {
         try {
           // Use AI-powered recommendations API
-          const response = await fetch('/api/recommendations?window=30d&limit=10&useAI=true', {
+          const response = await fetch('/api/recommendations?window=90d&limit=10&useAI=true', {
             headers: getAuthHeaders(),
           });
           const data = await response.json();
@@ -355,10 +355,10 @@ function HomeContent() {
             {queries.length > 0 && trendSeries.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold">Trends Over Time (30 Days)</h2>
+                  <h2 className="text-xl font-bold">Trends Over Time (90 Days)</h2>
                 </div>
                 <TrendsChart
-                  window="30d"
+                  window="90d"
                   series={trendSeries.map(s => ({
                     name: s.query,
                     window: s.window,
@@ -376,11 +376,7 @@ function HomeContent() {
               />
             )}
 
-            {/* Recommendations */}
-            <Recommendations
-              tutorials={recommendations.tutorials}
-              features={recommendations.features}
-            />
+            {/* Recommendations removed - now shown within cluster cards */}
           </div>
 
           {/* Right Column */}

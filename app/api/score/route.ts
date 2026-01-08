@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);
     const body = await request.json();
-    const { queryIds, window = '30d' } = body;
+    const { queryIds, window = '90d' } = body;
 
     if (!queryIds || !Array.isArray(queryIds) || queryIds.length === 0) {
       return NextResponse.json(
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const scores = await calculateTOSForQueries(queryIds, window);
+    const scores = await calculateTOSForQueries(queryIds, window, storage);
 
     // Store scores in database with window tracking
     for (const score of scores) {
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     const storage = await getAuthenticatedStorage(request);
     const { searchParams } = new URL(request.url);
     const queryId = searchParams.get('queryId');
-    const window = (searchParams.get('window') || '30d') as '30d';
+    const window = (searchParams.get('window') || '90d') as '90d';
     const refresh = searchParams.get('refresh') === 'true'; // Optional: recalculate scores
 
     if (queryId) {

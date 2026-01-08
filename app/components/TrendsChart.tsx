@@ -3,10 +3,10 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface TrendsChartProps {
-  window?: '30d';
+  window?: '90d';
   series: Array<{
     name: string;
-    window: '30d';
+    window: '90d';
     data: Array<{ date: string; value: number }>;
   }>;
 }
@@ -16,7 +16,7 @@ const colors = [
   '#0088fe', '#00c49f', '#ffbb28', '#ff8042', '#8884d8'
 ];
 
-export default function TrendsChart({ window = '30d', series }: TrendsChartProps) {
+export default function TrendsChart({ window = '90d', series }: TrendsChartProps) {
   // Filter series for current window
   const seriesForWindow = series.filter(s => s.window === window);
 

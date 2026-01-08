@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { 
       queries, 
-      windows = ['30d'], 
+      windows = ['90d'], 
       includeRegional = true, 
       includeRelated = true, 
       regions = ['US'],
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     // Map results back to original queries and store snapshots
     const interestOverTime: Array<{
       query: string; // Original query text
-      window: '30d';
+      window: '90d';
       data: Array<{ date: string; value: number }>;
     }> = [];
 
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
             query_id: resolvedEntry.queryId!,
             date: point.date instanceof Date ? point.date : new Date(point.date),
             interest_value: point.value,
-            window: '30d' as const,
+            window: '90d' as const,
             region: 'US', // Always US since we only search US now
           });
         }
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       // Always add to interestOverTime for chart display (without region suffix)
       interestOverTime.push({
         query: queryText, // Use query name without region suffix
-        window: '30d' as const,
+        window: '90d' as const,
         data: series.data.map(p => ({
           date: p.date instanceof Date ? p.date.toISOString() : new Date(p.date).toISOString(),
           value: p.value,
@@ -162,8 +162,8 @@ export async function POST(request: NextRequest) {
     let tosScores: Array<{ query_id: string; score: number; classification: string }> = [];
     if (queryIdsWithData.length > 0) {
       try {
-        // Calculate TOS for 30d window and store in database
-        const scores = await calculateTOSForQueries(queryIdsWithData, '30d');
+        // Calculate TOS for 90d window and store in database
+        const scores = await calculateTOSForQueries(queryIdsWithData, '90d', storage);
         
         // Store scores in database
         for (const score of scores) {
@@ -175,11 +175,11 @@ export async function POST(request: NextRequest) {
             consistency: score.breakdown.consistency,
             breadth: score.breakdown.breadth,
             calculated_at: new Date(),
-            window: '30d',
+            window: '90d',
           });
         }
 
-        // Get the latest scores (using 30d window)
+        // Get the latest scores (using 90d window)
         const latestScores = scores;
         tosScores = latestScores.map(s => ({
           query_id: s.query_id,

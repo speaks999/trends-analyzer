@@ -232,7 +232,7 @@ function generateAlertActions(
 export async function generateActions(storageInstance?: StorageInstance): Promise<Action[]> {
   const storage = storageInstance || defaultStorage;
   const queries = await storage.getAllQueries();
-  const scores = await calculateTOSForQueries(queries.map(q => q.id));
+  const scores = await calculateTOSForQueries(queries.map(q => q.id), storageInstance);
   const clusters = await storage.getAllClusters();
 
   const contentActions = await generateContentActions(queries, scores, clusters, storageInstance);
@@ -266,8 +266,8 @@ export async function getTopActions(limit: number = 20, storageInstance?: Storag
 }
 
 // Helper function for calculateTOSForQueries
-async function calculateTOSForQueries(queryIds: string[]): Promise<TrendScoreResult[]> {
+async function calculateTOSForQueries(queryIds: string[], storageInstance?: StorageInstance): Promise<TrendScoreResult[]> {
   const { calculateTOSForQueries: calcTOS } = await import('./scoring');
-  return await calcTOS(queryIds, '30d');
+  return await calcTOS(queryIds, '90d', storageInstance);
 }
 

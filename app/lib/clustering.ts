@@ -138,7 +138,7 @@ export async function clusterQueries(
       }
 
       const { calculateTOSForQueries } = await import('./scoring');
-      const scoresResult = await calculateTOSForQueries(queryIds, '30d');
+      const scoresResult = await calculateTOSForQueries(queryIds, '90d', storage);
       const scores = scoresResult.map(s => s.score);
       const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
 
