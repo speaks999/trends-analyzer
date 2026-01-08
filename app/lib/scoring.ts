@@ -2,6 +2,7 @@
 
 import { storage, TrendSnapshot } from './storage';
 import { TrendDataPoint } from './trends';
+import type { DatabaseStorage } from './storage-db';
 
 export interface ScoreBreakdown {
   slope: number;
@@ -83,9 +84,9 @@ function calculateConsistency(data: TrendDataPoint[]): number {
 /**
  * Calculate breadth (number of regions with meaningful interest)
  */
-function calculateBreadth(queryId: string): number {
+async function calculateBreadth(queryId: string, window?: '30d'): Promise<number> {
   // Get all snapshots for this query
-  const snapshots = storage.getTrendSnapshots(queryId);
+  const snapshots = await storage.getTrendSnapshots(queryId, window);
   
   if (snapshots.length === 0) return 0;
 
@@ -103,9 +104,9 @@ function calculateBreadth(queryId: string): number {
 /**
  * Calculate Trend Opportunity Score (TOS)
  */
-export function calculateTOS(queryId: string, window: '30d' | '90d' | '12m' = '12m'): TrendScoreResult {
+export async function calculateTOS(queryId: string, window: '30d' = '30d'): Promise<TrendScoreResult> {
   // Get trend snapshots for the specified window
-  const snapshots = storage.getTrendSnapshots(queryId, window);
+  const snapshots = await storage.getTrendSnapshots(queryId, window);
   
   if (snapshots.length === 0) {
     return {
@@ -127,19 +128,17 @@ export function calculateTOS(queryId: string, window: '30d' | '90d' | '12m' = '1
     value: s.interest_value,
   }));
 
-  // Calculate individual metrics
+  // Calculate individual metrics (all on 0-100 scale)
   const slope = calculateSlope(data);
   const acceleration = calculateAcceleration(data);
   const consistency = calculateConsistency(data);
-  const breadth = calculateBreadth(queryId);
+  const breadth = await calculateBreadth(queryId, window);
 
-  // Calculate TOS with weights
-  // TOS = (Slope × 0.4) + (Acceleration × 0.3) + (Consistency × 0.2) + (Breadth × 0.1)
+  // Calculate TOS with equal weighting (0-100 scale)
+  // TOS = (Slope + Acceleration + Consistency + Breadth) / 4
+  // All components are already on 0-100 scale, so simple average
   const score = Math.round(
-    slope * 0.4 +
-    acceleration * 0.3 +
-    consistency * 0.2 +
-    breadth * 0.1
+    (slope + acceleration + consistency + breadth) / 4
   );
 
   // Classify score
@@ -170,30 +169,41 @@ export function calculateTOS(queryId: string, window: '30d' | '90d' | '12m' = '1
 /**
  * Calculate TOS for multiple queries
  */
-export function calculateTOSForQueries(
+export async function calculateTOSForQueries(
   queryIds: string[],
-  window: '30d' | '90d' | '12m' = '12m'
-): TrendScoreResult[] {
-  return queryIds.map(id => calculateTOS(id, window));
+  window: '30d' = '30d'
+): Promise<TrendScoreResult[]> {
+  return Promise.all(queryIds.map(id => calculateTOS(id, window)));
 }
 
 /**
- * Get top queries by TOS score
+ * Get top queries by TOS score from database
  */
-export function getTopQueriesByTOS(
+export async function getTopQueriesByTOS(
   limit: number = 10,
-  window: '30d' | '90d' | '12m' = '12m',
-  minScore: number = 0
-): TrendScoreResult[] {
-  const allQueries = storage.getAllQueries();
-  const scores = calculateTOSForQueries(
-    allQueries.map(q => q.id),
-    window
-  );
-
-  return scores
-    .filter(s => s.score >= minScore)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  window: '30d' = '30d',
+  minScore: number = 0,
+  storageInstance?: DatabaseStorage
+): Promise<TrendScoreResult[]> {
+  // Use the provided storage instance or default to global storage
+  const storageToUse = storageInstance || storage;
+  // Use the database storage's getTopRankedQueries method
+  const scores = await storageToUse.getTopRankedQueries(limit, window, minScore);
+  
+  // Convert to TrendScoreResult format
+  return scores.map(score => ({
+    query_id: score.query_id,
+    score: score.score,
+    breakdown: {
+      slope: score.slope,
+      acceleration: score.acceleration,
+      consistency: score.consistency,
+      breadth: score.breadth,
+    },
+    classification: score.score >= 80 ? 'breakout' 
+      : score.score >= 60 ? 'growing'
+      : score.score >= 40 ? 'stable'
+      : 'declining',
+  }));
 }
 

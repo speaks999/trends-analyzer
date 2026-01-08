@@ -1,0 +1,7 @@
+# Ignore temporary files
+*.log
+/tmp/
+
+# Keep progress.txt and prd.json tracked
+!progress.txt
+!prd.json

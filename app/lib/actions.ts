@@ -1,9 +1,13 @@
 // Actions engine - triggers content/product/alert actions based on scores and intent
 
-import { storage, Query } from './storage';
-import { TrendScoreResult, calculateTOS } from './scoring';
+import { storage as defaultStorage, Query } from './storage';
+import { TrendScoreResult } from './scoring';
 import { IntentType } from './intent-classifier';
 import { OpportunityCluster } from './storage';
+import type { DatabaseStorage } from './storage-db';
+
+// Storage interface for dependency injection
+type StorageInstance = DatabaseStorage;
 
 export type ActionType = 'content' | 'product' | 'alert';
 
@@ -42,11 +46,13 @@ export type Action = ContentAction | ProductAction | AlertAction;
 /**
  * Generate content actions based on queries and scores
  */
-function generateContentActions(
+async function generateContentActions(
   queries: Query[],
   scores: TrendScoreResult[],
-  clusters: OpportunityCluster[]
-): ContentAction[] {
+  clusters: OpportunityCluster[],
+  storageInstance?: StorageInstance
+): Promise<ContentAction[]> {
+  const storage = storageInstance || defaultStorage;
   const actions: ContentAction[] = [];
 
   // High-scoring queries (breakout or growing) get content actions
@@ -55,9 +61,9 @@ function generateContentActions(
     return score && (score.classification === 'breakout' || score.classification === 'growing');
   });
 
-  highScoringQueries.forEach(query => {
+  for (const query of highScoringQueries) {
     const score = scores.find(s => s.query_id === query.id)!;
-    const classification = storage.getIntentClassification(query.id);
+    const classification = await storage.getIntentClassification(query.id);
     const intent = classification?.intent_type || 'education';
 
     // Determine content type based on intent
@@ -78,7 +84,7 @@ function generateContentActions(
       priority: score.score,
       queryIds: [query.id],
     });
-  });
+  }
 
   // Cluster-based content actions
   clusters.forEach(cluster => {
@@ -101,20 +107,25 @@ function generateContentActions(
 /**
  * Generate product actions based on queries and scores
  */
-function generateProductActions(
+async function generateProductActions(
   queries: Query[],
   scores: TrendScoreResult[],
-  clusters: OpportunityCluster[]
-): ProductAction[] {
+  clusters: OpportunityCluster[],
+  storageInstance?: StorageInstance
+): Promise<ProductAction[]> {
+  const storage = storageInstance || defaultStorage;
   const actions: ProductAction[] = [];
 
   // Tool-driven queries with high scores suggest product features
-  const toolQueries = queries.filter(q => {
-    const classification = storage.getIntentClassification(q.id);
-    return classification?.intent_type === 'tool';
-  });
+  const toolQueries: Query[] = [];
+  for (const q of queries) {
+    const classification = await storage.getIntentClassification(q.id);
+    if (classification?.intent_type === 'tool') {
+      toolQueries.push(q);
+    }
+  }
 
-  toolQueries.forEach(query => {
+  for (const query of toolQueries) {
     const score = scores.find(s => s.query_id === query.id);
     if (score && score.score >= 60) {
       actions.push({
@@ -126,15 +137,18 @@ function generateProductActions(
         queryIds: [query.id],
       });
     }
-  });
+  }
 
   // Pain-driven queries suggest product improvements
-  const painQueries = queries.filter(q => {
-    const classification = storage.getIntentClassification(q.id);
-    return classification?.intent_type === 'pain';
-  });
+  const painQueries: Query[] = [];
+  for (const q of queries) {
+    const classification = await storage.getIntentClassification(q.id);
+    if (classification?.intent_type === 'pain') {
+      painQueries.push(q);
+    }
+  }
 
-  painQueries.forEach(query => {
+  for (const query of painQueries) {
     const score = scores.find(s => s.query_id === query.id);
     if (score && score.score >= 70) {
       actions.push({
@@ -146,7 +160,7 @@ function generateProductActions(
         queryIds: [query.id],
       });
     }
-  });
+  }
 
   // High-scoring clusters suggest roadmap items
   clusters.forEach(cluster => {
@@ -215,13 +229,14 @@ function generateAlertActions(
 /**
  * Generate all actions based on current state
  */
-export function generateActions(): Action[] {
-  const queries = storage.getAllQueries();
-  const scores = calculateTOSForQueries(queries.map(q => q.id));
-  const clusters = storage.getAllClusters();
+export async function generateActions(storageInstance?: StorageInstance): Promise<Action[]> {
+  const storage = storageInstance || defaultStorage;
+  const queries = await storage.getAllQueries();
+  const scores = await calculateTOSForQueries(queries.map(q => q.id));
+  const clusters = await storage.getAllClusters();
 
-  const contentActions = generateContentActions(queries, scores, clusters);
-  const productActions = generateProductActions(queries, scores, clusters);
+  const contentActions = await generateContentActions(queries, scores, clusters, storageInstance);
+  const productActions = await generateProductActions(queries, scores, clusters, storageInstance);
   const alertActions = generateAlertActions(queries, scores);
 
   // Combine and sort by priority
@@ -237,21 +252,22 @@ export function generateActions(): Action[] {
 /**
  * Get actions by type
  */
-export function getActionsByType(type: ActionType): Action[] {
-  const allActions = generateActions();
+export async function getActionsByType(type: ActionType, storageInstance?: StorageInstance): Promise<Action[]> {
+  const allActions = await generateActions(storageInstance);
   return allActions.filter(a => a.type === type);
 }
 
 /**
  * Get top actions by priority
  */
-export function getTopActions(limit: number = 20): Action[] {
-  const allActions = generateActions();
+export async function getTopActions(limit: number = 20, storageInstance?: StorageInstance): Promise<Action[]> {
+  const allActions = await generateActions(storageInstance);
   return allActions.slice(0, limit);
 }
 
 // Helper function for calculateTOSForQueries
-function calculateTOSForQueries(queryIds: string[]): TrendScoreResult[] {
-  return queryIds.map(id => calculateTOS(id));
+async function calculateTOSForQueries(queryIds: string[]): Promise<TrendScoreResult[]> {
+  const { calculateTOSForQueries: calcTOS } = await import('./scoring');
+  return await calcTOS(queryIds, '30d');
 }
 

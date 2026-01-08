@@ -29,7 +29,7 @@ export async function generateQueries(
     throw new Error('OpenAI API key is not configured');
   }
 
-  const { count = 10, focus = 'all', context } = options;
+  const { count = 3, focus = 'all', context } = options;
   const templates = getAvailableTemplates();
   const dimensions = getExpansionDimensions();
 

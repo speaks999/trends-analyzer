@@ -10,7 +10,7 @@ interface AISuggestionsProps {
 export default function AISuggestions({ onAddQuery }: AISuggestionsProps) {
   const [suggestions, setSuggestions] = useState<GeneratedQuery[]>([]);
   const [loading, setLoading] = useState(false);
-  const [count, setCount] = useState(10);
+  const [count, setCount] = useState(3);
   const [focus, setFocus] = useState<'all' | 'pain' | 'tool' | 'transition' | 'education'>('all');
 
   const generateSuggestions = async () => {

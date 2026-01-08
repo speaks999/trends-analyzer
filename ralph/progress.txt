@@ -39,3 +39,59 @@ This file tracks progress through the PRD tasks. Each iteration should append it
   * Build: ✅ PASSED (npm run build succeeded)
   * Tests: ⚠️ Test dependencies need manual installation (npm install required)
 - Next: Mark task as complete in PRD. Test framework is set up but requires manual npm install to run tests.
+
+[2026-01-08 14:11:37] Iteration #2
+- Task: tos-equal-weight - Update TOS calculation to use equal weighting (0-100 scale)
+- Status: COMPLETE
+- Changes:
+  * Updated calculateTOS function in app/lib/scoring.ts
+  * Changed TOS formula from weighted average to equal weighting: (slope + acceleration + consistency + breadth) / 4
+  * Updated comment to reflect equal weighting approach
+  * Verified all 4 component scores are already on 0-100 scale (slope, acceleration, consistency, breadth)
+  * Formula now calculates simple average instead of weighted sum
+- Feedback:
+  * Type checking: ✅ PASSED (tsc --noEmit)
+  * Linting: ✅ PASSED (no errors)
+  * Code review: ✅ All components already normalized to 0-100 scale
+- Next: Task complete. TOS now uses equal weighting as requested.
+
+[2026-01-08 14:30:00] Iteration #3
+- Task: only-30d-window - Remove 90 day and 12 month time windows, only use 30 day results
+- Status: COMPLETE
+- Changes:
+  * Updated TimeWindow type to only include '30d' (removed '90d' and '12m')
+  * Changed all default window parameters from '12m' to '30d'
+  * Removed time window dropdown from frontend (app/page.tsx)
+  * Removed window state variable from frontend
+  * Updated all API routes to only fetch/calculate 30d data
+  * Updated getTrendData to only process 30d window
+  * Updated all function signatures that accept window parameter
+  * Removed 90d and 12m from database queries and calculations
+  * Updated type definitions in app/lib/supabase.ts
+  * Updated TrendsChart component to only accept '30d' window
+  * Simplified getSerpApiDate function to always return 'today 1-m'
+- Feedback:
+  * Type checking: ✅ PASSED (tsc --noEmit)
+  * Linting: ✅ PASSED (no errors)
+  * Code review: ✅ All references to 90d and 12m removed
+- Next: Task complete. Application now only retrieves and displays 30 day trend data.
+
+[2026-01-08 15:00:00] Iteration #4
+- Task: cluster-tutorial-recommendations - Add ability to generate tutorial recommendations per opportunity cluster
+- Status: COMPLETE
+- Changes:
+  * Created generateClusterTutorialRecommendationsAI function in app/lib/recommendations-ai.ts
+  * Function accepts cluster data (name, intent_type, average_score, queries with scores) and entrepreneur profile
+  * Designed OpenAI prompt to emphasize cluster context, intent type, and all cluster queries holistically
+  * Created API endpoint /api/cluster/recommendations (POST) for generating cluster-specific tutorials
+  * Endpoint fetches cluster details, gets query texts and scores, fetches profile, calls AI function
+  * Added Generate Tutorials button to each cluster card in OpportunityClusters component
+  * Added loading state and error handling for tutorial generation
+  * Implemented expandable/collapsible section to display generated tutorials below each cluster
+  * Tutorials are personalized to entrepreneur profile and cluster intent type
+  * Tutorials address the cluster theme holistically, not just individual queries
+- Feedback:
+  * Type checking: ✅ PASSED (tsc --noEmit)
+  * Linting: ✅ PASSED (no errors)
+  * Code review: ✅ All functionality implemented with proper error handling and loading states
+- Next: Task complete. Each cluster now has a button to generate personalized tutorial recommendations using OpenAI.

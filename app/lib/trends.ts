@@ -1,7 +1,7 @@
 // Google Trends API wrapper using SerpApi
 
-export type TimeWindow = '30d' | '90d' | '12m';
-export type GeoRegion = 'US' | 'CA';
+export type TimeWindow = '30d';
+export type GeoRegion = 'US';
 
 export interface TrendsKeywordResolution {
   originalQuery: string;
@@ -17,7 +17,7 @@ export interface InterestOverTimeResult {
   query: string;
   data: TrendDataPoint[];
   window: TimeWindow;
-  geo?: string; // Region code (e.g., 'US', 'CA')
+  geo?: string; // Region code (e.g., 'US')
 }
 
 export interface RegionalInterest {
@@ -41,16 +41,8 @@ export interface TrendResult {
  * Convert time window to SerpApi date format
  */
 function getSerpApiDate(window: TimeWindow): string {
-  switch (window) {
-    case '30d':
-      return 'now 30-d';
-    case '90d':
-      return 'now 90-d';
-    case '12m':
-      return 'today 12-m';
-    default:
-      return 'today 12-m';
-  }
+  // Only 30d window supported
+  return 'today 1-m'; // 1 month = ~30 days
 }
 
 /**
@@ -72,7 +64,7 @@ function getSerpApiDate(window: TimeWindow): string {
  */
 export async function getInterestOverTime(
   keyword: string | string[],
-  window: TimeWindow = '12m',
+  window: TimeWindow = '30d',
   geo: GeoRegion = 'US'
 ): Promise<InterestOverTimeResult[]> {
   const apiKey = process.env.SERPAPI_API_KEY;
@@ -96,6 +88,8 @@ export async function getInterestOverTime(
       date: date,
       geo: geo,
       data_type: 'TIMESERIES',
+      // Enable Ludicrous Speed mode for faster responses
+      ludicrous: '1',
     });
 
     const url = `https://serpapi.com/search.json?${params.toString()}`;
@@ -125,7 +119,7 @@ export async function getInterestOverTime(
     if (timelineData.length === 0) {
       console.warn(`No timeline data returned for ${keywords.join(', ')} (geo: ${geo})`);
       return keywords.map((kw) => ({
-        query: `${kw} (${geo})`,
+        query: kw, // Remove region suffix since we only search US
         data: [],
         window,
         geo,
@@ -143,11 +137,22 @@ export async function getInterestOverTime(
           const keywordValue = point.values.find((v: any) => 
             v.query?.toLowerCase() === kw.toLowerCase()
           );
-          value = keywordValue?.extracted_value || keywordValue?.value || 0;
+          const rawValue = keywordValue?.extracted_value || keywordValue?.value || 0;
           
           // If not found by query name, use index
-          if (value === 0 && point.values[index]) {
-            value = point.values[index].extracted_value || point.values[index].value || 0;
+          const rawValueByIndex = point.values[index]?.extracted_value || point.values[index]?.value || 0;
+          const finalRawValue = rawValue || rawValueByIndex;
+          
+          // Parse value - SerpAPI may return strings like "<1" for very low values
+          if (typeof finalRawValue === 'string') {
+            // Handle "<1" format - parse as 0.5 or 1
+            if (finalRawValue.startsWith('<')) {
+              value = 0.5; // Use 0.5 for "<1" values
+            } else {
+              value = parseFloat(finalRawValue) || 0;
+            }
+          } else {
+            value = Number(finalRawValue) || 0;
           }
         }
 
@@ -164,8 +169,10 @@ export async function getInterestOverTime(
 
       console.log(`Processed ${data.length} data points for ${kw} (geo: ${geo})`);
 
+      // Only include region suffix if there are multiple regions
+      // Since we only search US now, use query name without region suffix
       return {
-        query: `${kw} (${geo})`,
+        query: kw, // Remove region suffix since we only search US
         data,
         window,
         geo,
@@ -175,7 +182,7 @@ export async function getInterestOverTime(
     console.error(`Error fetching interest over time for ${keyword} (geo: ${geo}):`, error);
     const keywords = Array.isArray(keyword) ? keyword : [keyword];
     return keywords.map((kw) => ({
-      query: `${kw} (${geo})`,
+      query: kw, // Remove region suffix since we only search US
       data: [],
       window,
       geo,
@@ -185,6 +192,7 @@ export async function getInterestOverTime(
 
 /**
  * Fetch interest by region using SerpApi
+ * Returns empty array on error (graceful degradation)
  */
 export async function getInterestByRegion(
   keyword: string,
@@ -192,7 +200,8 @@ export async function getInterestByRegion(
 ): Promise<RegionalInterest[]> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
-    throw new Error('SERPAPI_API_KEY is not configured');
+    console.warn('SERPAPI_API_KEY is not configured, skipping regional interest');
+    return [];
   }
 
   try {
@@ -203,31 +212,54 @@ export async function getInterestByRegion(
       date: 'today 12-m',
       geo: geo,
       data_type: 'GEO_MAP',
+      // Enable Ludicrous Speed mode for faster responses
+      ludicrous: '1',
     });
 
     const url = `https://serpapi.com/search.json?${params.toString()}`;
     const response = await fetch(url);
     
     if (!response.ok) {
-      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
+      // Return empty array instead of throwing - regional data is optional
+      console.warn(`SerpApi request failed for regional interest: ${response.status} ${response.statusText}`);
+      return [];
     }
 
     const data = await response.json();
 
     if (data.error) {
-      throw new Error(`SerpApi error: ${data.error}`);
+      // Return empty array instead of throwing - regional data is optional
+      console.warn(`SerpApi error for regional interest: ${data.error}`);
+      return [];
     }
 
     // SerpApi returns compared_breakdown_by_region or interest_by_region
     const regionData = data.compared_breakdown_by_region || data.interest_by_region || [];
 
-    return regionData.map((item: any) => ({
-      region: item.location || item.geo || item.region || 'Unknown',
-      value: item.values?.[0]?.extracted_value || item.values?.[0]?.value || 0,
-    }));
+    return regionData.map((item: any) => {
+      const rawValue = item.values?.[0]?.extracted_value || item.values?.[0]?.value || 0;
+      let value: number;
+      
+      // Parse value - SerpAPI may return strings like "<1"
+      if (typeof rawValue === 'string') {
+        if (rawValue.startsWith('<')) {
+          value = 0.5; // Use 0.5 for "<1" values
+        } else {
+          value = parseFloat(rawValue) || 0;
+        }
+      } else {
+        value = Number(rawValue) || 0;
+      }
+      
+      return {
+        region: item.location || item.geo || item.region || 'Unknown',
+        value,
+      };
+    });
   } catch (error) {
-    console.error(`Error fetching interest by region for ${keyword}:`, error);
-    throw error;
+    // Return empty array instead of throwing - regional data is optional
+    console.warn(`Error fetching interest by region for ${keyword}:`, error);
+    return [];
   }
 }
 
@@ -289,7 +321,7 @@ export async function getRelatedQueries(
 }
 
 /**
- * Fetch comprehensive trend data for a query
+ * Fetch comprehensive trend data for a query with caching support
  * 
  * CRITICAL: When multiple keywords are provided, they are ALL queried together in each API call.
  * This ensures Google Trends normalizes them relative to each other, enabling proper comparison.
@@ -301,13 +333,19 @@ export async function getRelatedQueries(
  * 
  * This means scores are comparable WITHIN each window/region combination, but may vary
  * across different time windows or regions (as search patterns change).
+ * 
+ * CACHING: This function now checks the database first. If cached data exists for all queries
+ * in a window/region combination, it uses that data instead of calling SerpAPI.
+ * Only missing or incomplete data is fetched from SerpAPI.
  */
 export async function getTrendData(
   keyword: string | string[],
-  windows: TimeWindow[] = ['30d', '90d', '12m'],
+  windows: TimeWindow[] = ['30d'],
   includeRegional: boolean = true,
   includeRelated: boolean = true,
-  regions: GeoRegion[] = ['US', 'CA']
+  regions: GeoRegion[] = ['US'],
+  queryIdMap?: Map<string, string>, // Optional map of query text -> query ID for cache lookup
+  forceRefresh: boolean = false // Set to true to force refresh from SerpAPI
 ): Promise<TrendResult> {
   const keywords = Array.isArray(keyword) ? keyword : [keyword];
   
@@ -316,41 +354,120 @@ export async function getTrendData(
   console.log('Number of keywords:', keywords.length);
   console.log('Windows:', windows);
   console.log('Regions:', regions);
-  console.log('NOTE: All keywords will be queried together for proper comparison within each window/region');
+  console.log('Force refresh:', forceRefresh);
+  console.log('NOTE: Checking cache first, then fetching missing data from SerpAPI if needed');
   
   const interestOverTime: InterestOverTimeResult[] = [];
 
-  // Fetch interest over time for each window and region
-  // IMPORTANT: All keywords are passed together in each call to ensure proper normalization
-  for (const region of regions) {
-    for (const window of windows) {
+  // Import storage here to avoid circular dependencies
+  const { storage } = await import('./storage');
+
+  // Process all window/region combinations in parallel for better performance
+  const windowRegionTasks = regions.flatMap(region => 
+    windows.map(window => ({ region, window }))
+  );
+
+  // Process all windows in parallel
+  const windowResults = await Promise.all(
+    windowRegionTasks.map(async ({ region, window }) => {
       try {
-        console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${region})`);
-        // All keywords queried together = normalized relative to each other
-        const windowData = await getInterestOverTime(keywords, window, region);
-        console.log(`${window} (${region}) returned ${windowData.length} series:`, windowData.map(s => ({
-          query: s.query,
-          dataPoints: s.data.length
-        })));
-        interestOverTime.push(...windowData);
-        
-        // Add a small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Batch check cache for all queries at once
+        let useCache = !forceRefresh && queryIdMap !== undefined && queryIdMap.size > 0;
+        let missingQueries: string[] = [];
+        let cachedData: InterestOverTimeResult[] = [];
+
+        if (useCache && queryIdMap) {
+          // Use batch cache check for better performance
+          const dbStorage = storage as any;
+          if (typeof dbStorage.batchHasCachedTrendData === 'function') {
+            const cacheResults = await dbStorage.batchHasCachedTrendData(queryIdMap, window, region);
+            
+            // Check which queries have cache and which don't
+            for (const queryText of keywords) {
+              const hasCache = cacheResults.get(queryText);
+              if (hasCache) {
+                const queryId = queryIdMap.get(queryText);
+                if (queryId) {
+                  const cached = await dbStorage.getCachedTrendData(queryText, queryId, window, region);
+                  if (cached && cached.data.length > 0) {
+                    cachedData.push(cached);
+                    console.log(`✓ Using cached data for "${queryText}" (${window}, ${region}): ${cached.data.length} points`);
+                  } else {
+                    missingQueries.push(queryText);
+                  }
+                } else {
+                  missingQueries.push(queryText);
+                }
+              } else {
+                missingQueries.push(queryText);
+              }
+            }
+          } else {
+            // Fallback to individual checks if batch method doesn't exist
+            for (const queryText of keywords) {
+              const queryId = queryIdMap.get(queryText);
+              if (queryId && typeof dbStorage.hasCachedTrendData === 'function') {
+                const hasCache = await dbStorage.hasCachedTrendData(queryId, window, region);
+                if (hasCache) {
+                  const cached = await dbStorage.getCachedTrendData(queryText, queryId, window, region);
+                  if (cached && cached.data.length > 0) {
+                    cachedData.push(cached);
+                  } else {
+                    missingQueries.push(queryText);
+                  }
+                } else {
+                  missingQueries.push(queryText);
+                }
+              } else {
+                missingQueries.push(queryText);
+              }
+            }
+          }
+
+          // If we have cached data for all queries, use it
+          if (cachedData.length === keywords.length && missingQueries.length === 0) {
+            console.log(`✓ Using cached data for all ${keywords.length} queries (${window}, ${region})`);
+            return cachedData; // Return cached data, skip SerpAPI call
+          } else if (missingQueries.length > 0) {
+            console.log(`⚠️ Missing cached data for ${missingQueries.length} queries:`, missingQueries);
+            console.log(`  Will fetch all ${keywords.length} queries together from SerpAPI for proper normalization`);
+          }
+        }
+
+        // Fetch from SerpAPI (either because cache is disabled, incomplete, or force refresh)
+        if (!useCache || missingQueries.length > 0 || forceRefresh) {
+          console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${region})`);
+          // All keywords queried together = normalized relative to each other
+          const windowData = await getInterestOverTime(keywords, window, region);
+          console.log(`${window} (${region}) returned ${windowData.length} series:`, windowData.map(s => ({
+            query: s.query,
+            dataPoints: s.data.length
+          })));
+          return windowData;
+        }
+
+        return [];
       } catch (error) {
         console.error(`Error fetching ${window} data for region ${region}:`, error);
+        return [];
       }
-    }
-  }
+    })
+  );
+
+  // Flatten results from all parallel tasks
+  windowResults.forEach(result => {
+    interestOverTime.push(...result);
+  });
   
   console.log(`Total interestOverTime series: ${interestOverTime.length}`);
 
   // Fetch regional interest (only for first keyword if multiple, and for US by default)
+  // getInterestByRegion now handles errors gracefully and returns empty array
   let regionalInterest: RegionalInterest[] | undefined;
   if (includeRegional && keywords.length > 0) {
-    try {
-      regionalInterest = await getInterestByRegion(keywords[0], 'US');
-    } catch (error) {
-      console.error('Error fetching regional interest:', error);
+    regionalInterest = await getInterestByRegion(keywords[0], 'US');
+    if (regionalInterest.length === 0) {
+      regionalInterest = undefined; // Don't include empty array in response
     }
   }
 

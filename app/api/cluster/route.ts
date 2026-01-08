@@ -2,17 +2,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { clusterQueries, reclusterQueries, getClusters, getTopClusters } from '@/app/lib/clustering';
+import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 
 export async function POST(request: NextRequest) {
   try {
+    const storage = await getAuthenticatedStorage(request);
     const body = await request.json();
     const { recluster = false, similarityThreshold = 0.3, top = null } = body;
 
     let clusters;
     if (recluster) {
-      clusters = reclusterQueries(similarityThreshold);
+      clusters = await reclusterQueries(similarityThreshold, storage);
     } else {
-      clusters = clusterQueries(similarityThreshold);
+      clusters = await clusterQueries(similarityThreshold, storage);
     }
 
     // Return top clusters if requested
@@ -41,14 +43,15 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const storage = await getAuthenticatedStorage(request);
     const { searchParams } = new URL(request.url);
     const top = searchParams.get('top');
 
     let clusters;
     if (top && !isNaN(Number(top))) {
-      clusters = getTopClusters(Number(top));
+      clusters = await getTopClusters(Number(top), storage);
     } else {
-      clusters = getClusters();
+      clusters = await getClusters(storage);
     }
 
     return NextResponse.json({

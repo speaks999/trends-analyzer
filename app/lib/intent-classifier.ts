@@ -85,7 +85,7 @@ export async function classifyIntent(
   queryText: string
 ): Promise<ClassificationResult> {
   // Check if already classified
-  const existing = storage.getIntentClassification(queryId);
+  const existing = await storage.getIntentClassification(queryId);
   if (existing) {
     return {
       query_id: queryId,
@@ -145,7 +145,7 @@ Respond with ONLY a JSON object: {"intent": "pain|tool|transition|education", "c
     intent_type: result.intent,
     confidence: result.confidence,
   };
-  storage.setIntentClassification(classification);
+  await storage.setIntentClassification(classification);
 
   return {
     query_id: queryId,
@@ -169,8 +169,8 @@ export async function classifyIntents(
 /**
  * Get queries by intent type
  */
-export function getQueriesByIntent(intent: IntentType): string[] {
-  const classifications = storage.getAllIntentClassifications();
+export async function getQueriesByIntent(intent: IntentType): Promise<string[]> {
+  const classifications = await storage.getAllIntentClassifications();
   return classifications
     .filter(c => c.intent_type === intent)
     .map(c => c.query_id);

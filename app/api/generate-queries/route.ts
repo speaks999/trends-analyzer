@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const options: QueryGenerationOptions = {
-      count: body.count || 10,
+      count: body.count || 3,
       focus: body.focus || 'all',
       context: body.context,
     };

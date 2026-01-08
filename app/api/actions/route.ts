@@ -2,17 +2,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateActions, getActionsByType, getTopActions, ActionType } from '@/app/lib/actions';
+import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 
 export async function POST(request: NextRequest) {
   try {
+    const storage = await getAuthenticatedStorage(request);
     const body = await request.json();
     const { type, limit = 20 } = body;
 
     let actions;
     if (type && ['content', 'product', 'alert'].includes(type)) {
-      actions = getActionsByType(type as ActionType);
+      actions = await getActionsByType(type as ActionType, storage);
     } else {
-      actions = getTopActions(limit);
+      actions = await getTopActions(limit, storage);
     }
 
     return NextResponse.json({
@@ -34,15 +36,16 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const storage = await getAuthenticatedStorage(request);
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') as ActionType | null;
     const limit = searchParams.get('limit');
 
     let actions;
     if (type && ['content', 'product', 'alert'].includes(type)) {
-      actions = getActionsByType(type);
+      actions = await getActionsByType(type, storage);
     } else {
-      actions = getTopActions(limit ? Number(limit) : 20);
+      actions = await getTopActions(limit ? Number(limit) : 20, storage);
     }
 
     return NextResponse.json({

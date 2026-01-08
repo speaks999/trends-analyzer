@@ -23,8 +23,8 @@ export interface FeatureRecommendation {
 /**
  * Calculate a simple interest score based on trend data
  */
-function calculateInterestScore(queryId: string): number {
-  const snapshots = storage.getTrendSnapshots(queryId, '12m');
+async function calculateInterestScore(queryId: string): Promise<number> {
+  const snapshots = await storage.getTrendSnapshots(queryId, '30d');
   
   if (snapshots.length === 0) return 0;
 
@@ -64,19 +64,20 @@ function calculateInterestScore(queryId: string): number {
 /**
  * Generate tutorial recommendations based on queries with trend data
  */
-export function generateTutorialRecommendations(
+export async function generateTutorialRecommendations(
   limit: number = 10
-): TutorialRecommendation[] {
-  const allQueries = storage.getAllQueries();
-  
-  // Score each query based on trend data
-  const scoredQueries = allQueries
-    .map(query => {
-      const snapshots = storage.getTrendSnapshots(query.id, '12m');
+): Promise<TutorialRecommendation[]> {
+  try {
+    const allQueries = await storage.getAllQueries();
+    
+    // Score each query based on trend data
+    const scoredQueries = await Promise.all(
+    allQueries.map(async (query) => {
+      const snapshots = await storage.getTrendSnapshots(query.id, '30d');
       if (snapshots.length === 0) return null;
 
-      const score = calculateInterestScore(query.id);
-      const classification = storage.getIntentClassification(query.id);
+      const score = await calculateInterestScore(query.id);
+      const classification = await storage.getIntentClassification(query.id);
       
       // Calculate recent trend
       const thirtyDaysAgo = new Date();
@@ -96,12 +97,15 @@ export function generateTutorialRecommendations(
         classification,
       };
     })
+  );
+
+  const filteredQueries = scoredQueries
     .filter((item): item is NonNullable<typeof item> => item !== null)
     .filter(item => item.score >= 30) // Only recommend queries with meaningful interest
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
-  return scoredQueries.map(item => {
+  return filteredQueries.map(item => {
     const { query, score, snapshots, avgInterest, recentAvg, classification } = item;
     
     const evidence: string[] = [
@@ -123,35 +127,46 @@ export function generateTutorialRecommendations(
       evidence,
     };
   });
+  } catch (error) {
+    console.error('Error generating tutorial recommendations:', error);
+    return [];
+  }
 }
 
 /**
  * Generate product feature recommendations based on clusters
  */
-export function generateFeatureRecommendations(
+export async function generateFeatureRecommendations(
   limit: number = 10
-): FeatureRecommendation[] {
-  const clusters = storage.getAllClusters()
-    .filter(c => c.queries.length >= 2) // At least 2 queries to form a cluster
-    .map(cluster => {
-      // Calculate average interest score for queries in cluster
-      const queryScores = cluster.queries
-        .map(queryId => {
-          const snapshots = storage.getTrendSnapshots(queryId, '12m');
-          return snapshots.length > 0 ? calculateInterestScore(queryId) : 0;
-        })
-        .filter(score => score > 0);
+): Promise<FeatureRecommendation[]> {
+  try {
+    const allClusters = await storage.getAllClusters();
+  const clusters = await Promise.all(
+    allClusters
+      .filter(c => c.queries.length >= 2) // At least 2 queries to form a cluster
+      .map(async (cluster) => {
+        // Calculate average interest score for queries in cluster
+        const queryScores = await Promise.all(
+          cluster.queries.map(async (queryId) => {
+            const snapshots = await storage.getTrendSnapshots(queryId, '30d');
+            return snapshots.length > 0 ? await calculateInterestScore(queryId) : 0;
+          })
+        );
+        
+        const validScores = queryScores.filter(score => score > 0);
+        const avgScore = validScores.length > 0
+          ? validScores.reduce((sum, s) => sum + s, 0) / validScores.length
+          : 0;
 
-      const avgScore = queryScores.length > 0
-        ? queryScores.reduce((sum, s) => sum + s, 0) / queryScores.length
-        : 0;
+        return {
+          cluster,
+          avgScore,
+          queriesWithData: validScores.length,
+        };
+      })
+  );
 
-      return {
-        cluster,
-        avgScore,
-        queriesWithData: queryScores.length,
-      };
-    })
+  const filteredClusters = clusters
     .filter(item => item.avgScore >= 25 && item.queriesWithData >= 2) // Meaningful clusters
     .sort((a, b) => {
       // Sort by average score, then by cluster size
@@ -162,41 +177,48 @@ export function generateFeatureRecommendations(
     })
     .slice(0, limit);
 
-  return clusters.map(item => {
-    const { cluster, avgScore } = item;
-    const queries = cluster.queries
-      .map(id => storage.getQuery(id))
-      .filter((q): q is Query => q !== undefined);
+  return Promise.all(
+    filteredClusters.map(async (item) => {
+      const { cluster, avgScore } = item;
+      const queries = await Promise.all(
+        cluster.queries.map(async (id) => await storage.getQuery(id))
+      );
+      const validQueries = queries.filter((q): q is Query => q !== undefined);
 
-    const evidence: string[] = [
-      `Average Interest Score: ${Math.round(avgScore)}/100`,
-      `${cluster.queries.length} related queries`,
-      `${item.queriesWithData} queries with trend data`,
-      `Intent type: ${cluster.intent_type}`,
-    ];
+      const evidence: string[] = [
+        `Average Interest Score: ${Math.round(avgScore)}/100`,
+        `${cluster.queries.length} related queries`,
+        `${item.queriesWithData} queries with trend data`,
+        `Intent type: ${cluster.intent_type}`,
+      ];
 
-    if (queries.length > 0) {
-      evidence.push(`Sample queries: ${queries.slice(0, 3).map(q => q.text).join(', ')}`);
-    }
+      if (validQueries.length > 0) {
+        evidence.push(`Sample queries: ${validQueries.slice(0, 3).map(q => q.text).join(', ')}`);
+      }
 
-    return {
-      title: `Feature: ${cluster.name}`,
-      description: `Consider building features addressing "${cluster.name}" - cluster of ${cluster.queries.length} related queries with average interest of ${Math.round(avgScore)}`,
-      cluster: cluster.name,
-      averageScore: Math.round(avgScore),
-      queryCount: cluster.queries.length,
-      evidence,
-    };
-  });
+      return {
+        title: `Feature: ${cluster.name}`,
+        description: `Consider building features addressing "${cluster.name}" - cluster of ${cluster.queries.length} related queries with average interest of ${Math.round(avgScore)}`,
+        cluster: cluster.name,
+        averageScore: Math.round(avgScore),
+        queryCount: cluster.queries.length,
+        evidence,
+      };
+    })
+  );
+  } catch (error) {
+    console.error('Error generating feature recommendations:', error);
+    return [];
+  }
 }
 
 /**
  * Get all recommendations
  */
-export function getAllRecommendations() {
+export async function getAllRecommendations() {
   return {
-    tutorials: generateTutorialRecommendations(),
-    features: generateFeatureRecommendations(),
+    tutorials: await generateTutorialRecommendations(),
+    features: await generateFeatureRecommendations(),
   };
 }
 

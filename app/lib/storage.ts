@@ -17,7 +17,7 @@ export interface TrendSnapshot {
   date: Date;
   interest_value: number;
   region?: string;
-  window: '30d' | '90d' | '12m';
+  window: '30d';
 }
 
 export interface TrendScore {
@@ -28,6 +28,7 @@ export interface TrendScore {
   consistency: number;
   breadth: number;
   calculated_at: Date;
+  window?: '30d'; // Optional window for historical tracking
 }
 
 export interface OpportunityCluster {
@@ -42,6 +43,19 @@ export interface IntentClassification {
   query_id: string;
   intent_type: 'pain' | 'tool' | 'transition' | 'education';
   confidence: number;
+}
+
+export interface EntrepreneurProfile {
+  id?: string;
+  user_id?: string;
+  demographic?: string;
+  tech_savviness?: 'non-tech' | 'basic' | 'intermediate' | 'advanced';
+  business_stage?: string;
+  industry?: string;
+  geographic_region?: string;
+  preferences?: Record<string, any>;
+  created_at?: Date;
+  updated_at?: Date;
 }
 
 class Storage {
@@ -91,7 +105,7 @@ class Storage {
     this.trendSnapshots.push(snapshot);
   }
 
-  getTrendSnapshots(queryId: string, window?: '30d' | '90d' | '12m'): TrendSnapshot[] {
+  getTrendSnapshots(queryId: string, window?: '30d'): TrendSnapshot[] {
     let snapshots = this.trendSnapshots.filter(s => s.query_id === queryId);
     if (window) {
       snapshots = snapshots.filter(s => s.window === window);
@@ -99,7 +113,7 @@ class Storage {
     return snapshots.sort((a, b) => a.date.getTime() - b.date.getTime());
   }
 
-  getLatestSnapshot(queryId: string, window: '30d' | '90d' | '12m'): TrendSnapshot | undefined {
+  getLatestSnapshot(queryId: string, window: '30d'): TrendSnapshot | undefined {
     const snapshots = this.getTrendSnapshots(queryId, window);
     return snapshots[snapshots.length - 1];
   }
@@ -179,7 +193,11 @@ class Storage {
   }
 }
 
-// Singleton instance (in-memory storage)
-// To use Supabase database storage, see MIGRATION_GUIDE.md
-export const storage = new Storage();
+// Import database-backed storage
+// The in-memory Storage class above is kept for reference but we use database storage
+import { storage as dbStorage } from './storage-db';
+
+// Export database storage as the default storage
+// This replaces the in-memory storage with database-backed storage
+export const storage = dbStorage;
 

@@ -5,7 +5,6 @@ import { storage, Query } from '@/app/lib/storage';
 import { classifyIntents } from '@/app/lib/intent-classifier';
 import { clusterQueries, OpportunityCluster } from '@/app/lib/clustering';
 import { generateActions, Action } from '@/app/lib/actions';
-import { getAllRecommendations } from '@/app/lib/recommendations';
 import QueryInput from '@/app/components/QueryInput';
 import QueryList from '@/app/components/QueryList';
 import AISuggestions from '@/app/components/AISuggestions';
@@ -17,22 +16,41 @@ import Recommendations from '@/app/components/Recommendations';
 import { TrendScoreResult } from '@/app/lib/scoring';
 import AuthGuard from '@/app/components/AuthGuard';
 import UserMenu from '@/app/components/UserMenu';
+import SettingsPanel from '@/app/components/SettingsPanel';
+import { useAuth } from '@/app/lib/auth-context';
 
 function HomeContent() {
+  const { session } = useAuth();
+
+  // Helper to get auth headers for API requests
+  const getAuthHeaders = useCallback((): HeadersInit => {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
+    return headers;
+  }, [session]);
   const [queries, setQueries] = useState<Query[]>([]);
   const [classifications, setClassifications] = useState<Map<string, import('@/app/lib/storage').IntentClassification>>(new Map());
   const [clusters, setClusters] = useState<OpportunityCluster[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
   const [trendSeries, setTrendSeries] = useState<
-    Array<{ query: string; window: '30d' | '90d' | '12m'; data: Array<{ date: string; value: number }> }>
+    Array<{ query: string; window: '30d'; data: Array<{ date: string; value: number }> }>
   >([]);
   const [trendScores, setTrendScores] = useState<TrendScoreResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [window, setWindow] = useState<'30d' | '90d' | '12m'>('12m');
+  const [recommendations, setRecommendations] = useState<{
+    tutorials: Array<import('@/app/lib/recommendations').TutorialRecommendation | import('@/app/lib/recommendations-ai').TutorialRecommendation>;
+    features: Array<import('@/app/lib/recommendations').FeatureRecommendation | import('@/app/lib/recommendations-ai').FeatureRecommendation>;
+  }>({ tutorials: [], features: [] });
+  const [showSettings, setShowSettings] = useState(false);
 
   // Load initial data
   useEffect(() => {
     loadQueries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateClusters = useCallback(async () => {
@@ -41,9 +59,7 @@ function HomeContent() {
     try {
       const response = await fetch('/api/cluster', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           recluster: false,
           similarityThreshold: 0.3,
@@ -57,11 +73,13 @@ function HomeContent() {
     } catch (error) {
       console.error('Error updating clusters:', error);
     }
-  }, [queries]);
+  }, [queries, getAuthHeaders]);
 
   const updateActions = useCallback(async () => {
     try {
-      const response = await fetch('/api/actions');
+      const response = await fetch('/api/actions', {
+        headers: getAuthHeaders(),
+      });
       const data = await response.json();
       if (data.success) {
         setActions(data.actions);
@@ -69,49 +87,110 @@ function HomeContent() {
     } catch (error) {
       console.error('Error updating actions:', error);
     }
-  }, []);
+  }, [getAuthHeaders]);
 
   // Update clusters when queries change
   useEffect(() => {
-    if (queries.length > 0) {
+    if (queries.length > 0 && session) {
       updateClusters();
       updateActions();
     }
   }, [queries, updateClusters, updateActions]);
 
-  const loadQueries = () => {
-    const allQueries = storage.getAllQueries();
-    setQueries(allQueries);
-
-    // Load classifications
-    const allClassifications = storage.getAllIntentClassifications();
-    const classificationsMap = new Map<string, import('@/app/lib/storage').IntentClassification>();
-    allClassifications.forEach(classification => {
-      classificationsMap.set(classification.query_id, classification);
-    });
-    setClassifications(classificationsMap);
-  };
-
-  const handleAddQuery = async (queryText: string) => {
-    const query = storage.addQuery({ text: queryText });
-    setQueries([...queries, query]);
-
-    // Classify intent
+  const loadQueries = async () => {
     try {
-      const results = await classifyIntents([{ id: query.id, text: queryText }]);
-      if (results.length > 0) {
-        const newClassifications = new Map(classifications);
-        newClassifications.set(results[0].query_id, results[0]);
-        setClassifications(newClassifications);
+      const allQueries = await storage.getAllQueries();
+      setQueries(allQueries);
+
+      // Load classifications
+      const allClassifications = await storage.getAllIntentClassifications();
+      const classificationsMap = new Map<string, import('@/app/lib/storage').IntentClassification>();
+      allClassifications.forEach(classification => {
+        classificationsMap.set(classification.query_id, classification);
+      });
+      setClassifications(classificationsMap);
+
+      // Load scores for display
+      if (allQueries.length > 0) {
+        loadTrendScores();
       }
     } catch (error) {
-      console.error('Error classifying intent:', error);
+      console.error('Error loading queries:', error);
     }
   };
 
-  const handleRemoveQuery = (id: string) => {
-    storage.removeQuery(id);
-    setQueries(queries.filter(q => q.id !== id));
+  const loadTrendScores = async () => {
+    try {
+      const response = await fetch(`/api/score?window=30d`, {
+        headers: getAuthHeaders(),
+      });
+      const data = await response.json();
+      if (data.success && data.scores && data.scores.length > 0) {
+        // Sort by score descending - highest ranking terms first
+        const sortedScores = data.scores.sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
+        setTrendScores(sortedScores);
+      } else {
+        // If no scores, refresh them for all queries
+        if (queries.length > 0) {
+          refreshAllScores();
+        }
+      }
+    } catch (error) {
+      console.error('Error loading trend scores:', error);
+    }
+  };
+
+  const refreshAllScores = async () => {
+    try {
+      const response = await fetch('/api/score/refresh', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ window: '30d' }), // Fixed: use literal '30d' instead of undefined window variable
+      });
+      const data = await response.json();
+      if (data.success && data.topQueries) {
+        setTrendScores(data.topQueries);
+      }
+    } catch (error) {
+      console.error('Error refreshing scores:', error);
+    }
+  };
+
+  const handleAddQuery = async (queryText: string) => {
+    try {
+      const query = await storage.addQuery({ text: queryText });
+      setQueries([...queries, query]);
+
+      // Classify intent
+      try {
+        const results = await classifyIntents([{ id: query.id, text: queryText }]);
+        if (results.length > 0) {
+          const newClassifications = new Map(classifications);
+          newClassifications.set(results[0].query_id, results[0]);
+          setClassifications(newClassifications);
+          
+          // Store classification in database
+          await storage.setIntentClassification(results[0]);
+        }
+      } catch (error) {
+        console.error('Error classifying intent:', error);
+      }
+    } catch (error) {
+      console.error('Error adding query:', error);
+      alert('Failed to add query. Please try again.');
+    }
+  };
+
+  const handleRemoveQuery = async (id: string) => {
+    try {
+      await storage.removeQuery(id);
+      setQueries(queries.filter(q => q.id !== id));
+      // Remove from scores if present
+      setTrendScores(trendScores.filter(s => s.query_id !== id));
+    } catch (error) {
+      console.error('Error removing query:', error);
+      alert('Failed to remove query. Please try again.');
+    }
   };
 
   const handleFetchTrends = async () => {
@@ -126,15 +205,13 @@ function HomeContent() {
 
       const response = await fetch('/api/trends', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           queries: queryTexts,
-          windows: ['30d', '90d', '12m'],
+          windows: ['30d'],
           includeRegional: true,
           includeRelated: true,
-          regions: ['US', 'CA'], // Request data for both US and Canada
+          regions: ['US'], // Request data for United States only
         }),
       });
 
@@ -145,18 +222,26 @@ function HomeContent() {
         const interestOverTime = data.data?.interestOverTime || [];
         setTrendSeries(interestOverTime);
 
-        // Load TOS scores from response and fetch full details
-        try {
-          const scoreResponse = await fetch('/api/score?window=12m');
-          const scoreData = await scoreResponse.json();
-          if (scoreData.success && scoreData.scores) {
-            // Sort by score descending to show highest ranking terms first
-            const sortedScores = scoreData.scores.sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
-            setTrendScores(sortedScores);
-          }
-        } catch (error) {
-          console.error('Error fetching detailed scores:', error);
+        // TOS scores are calculated and returned in the trends response
+        // Also refresh all scores to ensure rankings are up to date
+        if (data.tosScores && data.tosScores.length > 0) {
+          // Convert to TrendScoreResult format and sort
+          const sortedScores = data.tosScores.map((s: any) => ({
+            query_id: s.query_id,
+            score: s.score,
+            classification: s.classification,
+            breakdown: {
+              slope: 0,
+              acceleration: 0,
+              consistency: 0,
+              breadth: 0,
+            },
+          })).sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
+          setTrendScores(sortedScores);
         }
+        
+        // Refresh all scores in background to ensure we have the latest rankings
+        refreshAllScores();
 
         const totalPoints = interestOverTime.reduce((sum: number, s: any) => sum + (s.data?.length || 0), 0);
         if (totalPoints === 0) {
@@ -178,37 +263,58 @@ function HomeContent() {
     }
   };
 
-  // Load TOS scores on component mount and when queries change
+  // Note: Window selection removed - we only use 30d now
+  // Removed useEffect that depended on window variable since it doesn't exist
+
+  // Load AI-powered recommendations when queries change (only if we have queries)
   useEffect(() => {
-    const loadTrendScores = async () => {
-      try {
-        const response = await fetch('/api/score?window=12m');
-        const data = await response.json();
-        if (data.success && data.scores && data.scores.length > 0) {
-          // Sort by score descending - highest ranking terms first
-          const sortedScores = data.scores.sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
-          setTrendScores(sortedScores);
+    const loadRecommendations = async () => {
+      if (queries.length > 0 && session) {
+        try {
+          // Use AI-powered recommendations API
+          const response = await fetch('/api/recommendations?window=30d&limit=10&useAI=true', {
+            headers: getAuthHeaders(),
+          });
+          const data = await response.json();
+          if (data.success) {
+            setRecommendations({
+              tutorials: data.tutorials || [],
+              features: data.features || [],
+            });
+          }
+        } catch (error) {
+          // Silently fail - recommendations are optional
+          // This can happen if user is not authenticated or has no data
+          console.debug('Could not load recommendations:', error);
+          setRecommendations({ tutorials: [], features: [] });
         }
-      } catch (error) {
-        console.error('Error loading trend scores:', error);
+      } else {
+        setRecommendations({ tutorials: [], features: [] });
       }
     };
 
-    if (queries.length > 0) {
-      loadTrendScores();
-    }
-  }, [queries.length]);
-
-
-  const recommendations = getAllRecommendations();
+    loadRecommendations();
+  }, [queries, getAuthHeaders]);
 
   return (
     <main className="min-h-screen p-4 md:p-8 bg-gray-50">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6 md:mb-8">
           <h1 className="text-3xl md:text-4xl font-bold">Entrepreneur Demand & Trend Intelligence System</h1>
-          <UserMenu />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium"
+            >
+              Settings
+            </button>
+            <UserMenu />
+          </div>
         </div>
+
+        {showSettings && (
+          <SettingsPanel onClose={() => setShowSettings(false)} />
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
           {/* Left Column */}
@@ -249,19 +355,10 @@ function HomeContent() {
             {queries.length > 0 && trendSeries.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold">Trends Over Time</h2>
-                  <select
-                    value={window}
-                    onChange={(e) => setWindow(e.target.value as '30d' | '90d' | '12m')}
-                    className="px-3 py-1 border border-gray-300 rounded"
-                  >
-                    <option value="30d">30 Days</option>
-                    <option value="90d">90 Days</option>
-                    <option value="12m">12 Months</option>
-                  </select>
+                  <h2 className="text-xl font-bold">Trends Over Time (30 Days)</h2>
                 </div>
                 <TrendsChart
-                  window={window}
+                  window="30d"
                   series={trendSeries.map(s => ({
                     name: s.query,
                     window: s.window,

@@ -2,17 +2,28 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrendData, TimeWindow, GeoRegion } from '@/app/lib/trends';
-import { storage } from '@/app/lib/storage';
+import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 import { calculateTOSForQueries } from '@/app/lib/scoring';
 
 export async function POST(request: NextRequest) {
   try {
+    // Get authenticated storage instance for this user
+    const storage = await getAuthenticatedStorage(request);
+
     const body = await request.json();
-    const { queries, windows = ['30d', '90d', '12m'], includeRegional = true, includeRelated = true, regions = ['US', 'CA'] } = body;
+    const { 
+      queries, 
+      windows = ['30d'], 
+      includeRegional = true, 
+      includeRelated = true, 
+      regions = ['US'],
+      forceRefresh = false // Allow forcing refresh from SerpAPI
+    } = body;
 
     console.log('=== TRENDS API REQUEST ===');
     console.log('Received queries:', JSON.stringify(queries, null, 2));
     console.log('Number of queries:', queries?.length);
+    console.log('Force refresh:', forceRefresh);
 
     if (!queries || !Array.isArray(queries) || queries.length === 0) {
       return NextResponse.json(
@@ -22,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Map query texts to query IDs
-    const allQueries = storage.getAllQueries();
+    const allQueries = await storage.getAllQueries();
     console.log('=== STORAGE STATE ===');
     console.log('Total queries in storage:', allQueries.length);
     console.log('Queries in storage:', allQueries.map(q => ({ id: q.id, text: q.text })));
@@ -47,7 +58,7 @@ export async function POST(request: NextRequest) {
     })));
     console.log('Sending to getTrendData:', JSON.stringify(queries, null, 2));
 
-    // Fetch trend data using original queries directly
+    // Fetch trend data - will check cache first unless forceRefresh is true
     let trendData;
     try {
       trendData = await getTrendData(
@@ -55,7 +66,9 @@ export async function POST(request: NextRequest) {
         windows as TimeWindow[],
         includeRegional,
         includeRelated,
-        regions as GeoRegion[] // Pass regions to getTrendData
+        regions as GeoRegion[], // Pass regions to getTrendData
+        queryMap, // Pass query map for cache lookup
+        forceRefresh // Pass force refresh flag
       );
       
       console.log('=== TRENDS DATA RETURNED ===');
@@ -73,17 +86,16 @@ export async function POST(request: NextRequest) {
     // Map results back to original queries and store snapshots
     const interestOverTime: Array<{
       query: string; // Original query text
-      window: '30d' | '90d' | '12m';
+      window: '30d';
       data: Array<{ date: string; value: number }>;
     }> = [];
 
-    // Create a map from query text (with region suffix) to resolved entry
-    // For each original query, we expect two series from getTrendData (US and CA)
+    // Create a map from query text to resolved entry
+    // Since we only search US now, query names don't include region suffix
     const fullQueryTextToResolved = new Map<string, typeof resolved[0]>();
     resolved.forEach(r => {
-      regions.forEach((region: GeoRegion) => {
-        fullQueryTextToResolved.set(`${r.originalQuery} (${region})`, r);
-      });
+      // Map query text to resolved entry (no region suffix needed)
+      fullQueryTextToResolved.set(r.originalQuery, r);
     });
 
     console.log('=== MAPPING RESULTS ===');
@@ -93,35 +105,38 @@ export async function POST(request: NextRequest) {
       queryId: value.queryId
     })));
 
-    trendData.interestOverTime.forEach((series, index) => {
-      const queryTextWithRegion = series.query; // e.g., "cash flow issues (US)"
-      const resolvedEntry = fullQueryTextToResolved.get(queryTextWithRegion);
+    // Process series and store snapshots
+    for (const [index, series] of trendData.interestOverTime.entries()) {
+      // Query names no longer include region suffix (since we only search US)
+      // Remove any (US) suffix that might exist in old cached data
+      const queryText = series.query.replace(/\s*\(US\)\s*$/, '').trim();
+      const resolvedEntry = fullQueryTextToResolved.get(queryText);
       
-      console.log(`Processing series ${index + 1}: "${queryTextWithRegion}"`);
+      console.log(`Processing series ${index + 1}: "${queryText}"`);
       console.log(`  - Found in resolved map: ${!!resolvedEntry}`);
       console.log(`  - Query ID: ${resolvedEntry?.queryId ? 'FOUND' : 'NOT FOUND'}`);
       console.log(`  - Data points: ${series.data.length}`);
 
       if (resolvedEntry && resolvedEntry.queryId) {
         // Store each data point as a TrendSnapshot
-        series.data.forEach(point => {
-          storage.addTrendSnapshot({
+        for (const point of series.data) {
+          await storage.addTrendSnapshot({
             query_id: resolvedEntry.queryId!,
             date: point.date instanceof Date ? point.date : new Date(point.date),
             interest_value: point.value,
-            window: series.window as '30d' | '90d' | '12m',
-            region: queryTextWithRegion.match(/\((US|CA)\)$/)?.[1] as GeoRegion, // Extract region from name
+            window: '30d' as const,
+            region: 'US', // Always US since we only search US now
           });
-        });
+        }
         console.log('  ✓ Snapshots stored');
       } else {
         console.warn(`  ⚠️ No query ID found - skipping snapshot storage but still returning chart data`);
       }
 
-      // Always add to interestOverTime for chart display
+      // Always add to interestOverTime for chart display (without region suffix)
       interestOverTime.push({
-        query: queryTextWithRegion, // Use the name with region suffix for chart legend
-        window: series.window as '30d' | '90d' | '12m',
+        query: queryText, // Use query name without region suffix
+        window: '30d' as const,
         data: series.data.map(p => ({
           date: p.date instanceof Date ? p.date.toISOString() : new Date(p.date).toISOString(),
           value: p.value,
@@ -129,7 +144,7 @@ export async function POST(request: NextRequest) {
       });
       
       console.log(`  ✓ Added to interestOverTime`);
-    });
+    }
 
     console.log('=== FINAL RESULT ===');
     console.log(`Total series in interestOverTime: ${interestOverTime.length}`);
@@ -147,31 +162,26 @@ export async function POST(request: NextRequest) {
     let tosScores: Array<{ query_id: string; score: number; classification: string }> = [];
     if (queryIdsWithData.length > 0) {
       try {
-        // Calculate TOS for each time window
-        const windowsToCalculate: TimeWindow[] = ['30d', '90d', '12m'];
-        const allScores = windowsToCalculate.flatMap(window => 
-          calculateTOSForQueries(queryIdsWithData, window)
-        );
+        // Calculate TOS for 30d window and store in database
+        const scores = await calculateTOSForQueries(queryIdsWithData, '30d');
         
-        // Store scores in storage
-        allScores.forEach(score => {
-          const storedScore = storage.getTrendScore(score.query_id);
-          // Only update if this window's score is higher or if no score exists
-          if (!storedScore || score.score > storedScore.score) {
-            storage.setTrendScore({
-              query_id: score.query_id,
-              score: score.score,
-              slope: score.breakdown.slope,
-              acceleration: score.breakdown.acceleration,
-              consistency: score.breakdown.consistency,
-              breadth: score.breakdown.breadth,
-              calculated_at: new Date(),
-            });
-          }
-        });
+        // Store scores in database
+        for (const score of scores) {
+          await storage.setTrendScore({
+            query_id: score.query_id,
+            score: score.score,
+            slope: score.breakdown.slope,
+            acceleration: score.breakdown.acceleration,
+            consistency: score.breakdown.consistency,
+            breadth: score.breakdown.breadth,
+            calculated_at: new Date(),
+            window: '30d',
+          });
+        }
 
-        // Get the highest scores (using 12m window as primary)
-        tosScores = calculateTOSForQueries(queryIdsWithData, '12m').map(s => ({
+        // Get the latest scores (using 30d window)
+        const latestScores = scores;
+        tosScores = latestScores.map(s => ({
           query_id: s.query_id,
           score: s.score,
           classification: s.classification,

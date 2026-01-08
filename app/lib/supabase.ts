@@ -1,19 +1,27 @@
-// Supabase client configuration for server-side use
-// Uses secret key for server-side operations (bypasses RLS for admin operations)
+// Supabase client configuration for server-side ADMIN operations ONLY
+// ⚠️ WARNING: This client uses the service role key and bypasses RLS policies.
+// 
+// For user-authenticated operations, ALWAYS use getAuthenticatedSupabaseClient()
+// from auth-helpers.ts which respects RLS and user permissions.
+//
+// Only use this client for:
+// - Admin operations that need to bypass RLS
+// - Server-side operations that don't require user context
+// - Background jobs or system-level tasks
 
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
-// Use secret key for server-side operations (NOT exposed to client)
-// Falls back to publishable key if secret key not available (will still work with RLS)
-const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+// Use service role key (secret key) for admin operations only
+// This bypasses RLS - use with caution!
+const supabaseKey = process.env.SUPABASE_SECRET_KEY || '';
 
 if (!supabaseUrl || !supabaseKey) {
-  console.warn('Supabase URL or Key is missing. Please set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY (or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) environment variables.');
+  console.warn('Supabase URL or Secret Key is missing. Admin operations may not work. Please set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY environment variables.');
 }
 
-// Create a single supabase client for server-side use
-// Using secret key allows admin operations that bypass RLS
+// Create a Supabase client for server-side ADMIN use only
+// ⚠️ This bypasses Row Level Security - do not use for user-scoped operations!
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     persistSession: false,
@@ -34,6 +42,7 @@ export interface Database {
           function: string | null;
           pain: string | null;
           asset: string | null;
+          user_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -44,6 +53,7 @@ export interface Database {
           function?: string | null;
           pain?: string | null;
           asset?: string | null;
+          user_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -54,6 +64,7 @@ export interface Database {
           function?: string | null;
           pain?: string | null;
           asset?: string | null;
+          user_id?: string | null;
           created_at?: string;
         };
       };
@@ -64,7 +75,7 @@ export interface Database {
           date: string;
           interest_value: number;
           region: string | null;
-          window: '30d' | '90d' | '12m';
+          window: '30d';
           created_at: string;
         };
         Insert: {
@@ -73,7 +84,7 @@ export interface Database {
           date: string;
           interest_value: number;
           region?: string | null;
-          window: '30d' | '90d' | '12m';
+          window: '30d';
           created_at?: string;
         };
         Update: {
@@ -82,7 +93,7 @@ export interface Database {
           date?: string;
           interest_value?: number;
           region?: string | null;
-          window?: '30d' | '90d' | '12m';
+          window?: '30d';
           created_at?: string;
         };
       };
@@ -95,6 +106,7 @@ export interface Database {
           acceleration: number;
           consistency: number;
           breadth: number;
+          window: '30d' | null;
           calculated_at: string;
         };
         Insert: {
@@ -105,6 +117,7 @@ export interface Database {
           acceleration: number;
           consistency: number;
           breadth: number;
+          window?: '30d' | null;
           calculated_at?: string;
         };
         Update: {
@@ -115,6 +128,7 @@ export interface Database {
           acceleration?: number;
           consistency?: number;
           breadth?: number;
+          window?: '30d' | null;
           calculated_at?: string;
         };
       };
@@ -147,6 +161,7 @@ export interface Database {
           name: string;
           intent_type: 'pain' | 'tool' | 'transition' | 'education';
           average_score: number;
+          user_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -155,6 +170,7 @@ export interface Database {
           name: string;
           intent_type: 'pain' | 'tool' | 'transition' | 'education';
           average_score: number;
+          user_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -163,6 +179,7 @@ export interface Database {
           name?: string;
           intent_type?: 'pain' | 'tool' | 'transition' | 'education';
           average_score?: number;
+          user_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };

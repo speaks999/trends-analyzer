@@ -1,0 +1,134 @@
+{
+  "version": "1.0.0",
+  "description": "Example PRD - Copy this and modify for your own use",
+  "tasks": [
+    {
+      "id": "add-error-boundary",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Add React Error Boundary component to catch and handle errors gracefully",
+      "steps": [
+        "Create ErrorBoundary.tsx component in app/components/",
+        "Implement componentDidCatch and getDerivedStateFromError",
+        "Add error logging (consider Sentry or similar)",
+        "Display user-friendly error message with option to retry",
+        "Wrap main app content in ErrorBoundary in layout.tsx",
+        "Write unit tests for ErrorBoundary component",
+        "Test with intentional errors to verify behavior"
+      ],
+      "passes": false,
+      "acceptanceCriteria": [
+        "Error boundary catches React component errors",
+        "User sees friendly error message (not blank screen)",
+        "Errors are logged appropriately",
+        "Tests pass with >80% coverage"
+      ]
+    },
+    {
+      "id": "add-loading-states",
+      "category": "ux",
+      "priority": "high",
+      "description": "Add loading indicators for all async operations",
+      "steps": [
+        "Audit all components with async operations",
+        "Identify places without loading states",
+        "Add loading spinners/skeletons to TrendScores component",
+        "Add loading state to QueryList during fetch",
+        "Add loading state to TrendsChart when fetching data",
+        "Add loading state to Recommendations component",
+        "Ensure loading states are accessible (ARIA labels)",
+        "Write tests for loading state behavior"
+      ],
+      "passes": false,
+      "acceptanceCriteria": [
+        "All async operations show loading state",
+        "Loading states are accessible",
+        "No flickering or layout shifts during loading",
+        "Tests verify loading states appear/disappear correctly"
+      ]
+    },
+    {
+      "id": "improve-error-messages",
+      "category": "ux",
+      "priority": "medium",
+      "description": "Improve error messages throughout the application",
+      "steps": [
+        "Audit all error handling locations",
+        "Replace generic errors with specific, actionable messages",
+        "Add error context (what operation failed, why)",
+        "Ensure API errors display user-friendly messages",
+        "Add retry mechanisms where appropriate",
+        "Style error messages consistently",
+        "Add tests for error message display"
+      ],
+      "passes": false,
+      "acceptanceCriteria": [
+        "All errors show specific, actionable messages",
+        "Users understand what went wrong",
+        "Users know how to fix or retry",
+        "Error messages are styled consistently"
+      ]
+    },
+    {
+      "id": "add-unit-tests",
+      "category": "quality",
+      "priority": "high",
+      "description": "Add comprehensive unit tests for core business logic",
+      "steps": [
+        "Set up testing framework (Jest/Vitest)",
+        "Add tests for scoring.ts (calculateTOS, calculateBreadth)",
+        "Add tests for clustering.ts (clusterQueries)",
+        "Add tests for intent-classifier.ts (classifyIntent)",
+        "Add tests for trends.ts (getTrendData, caching logic)",
+        "Add tests for recommendations.ts (generateRecommendations)",
+        "Aim for >80% coverage on app/lib/* files",
+        "Ensure all tests pass before marking complete"
+      ],
+      "passes": false,
+      "acceptanceCriteria": [
+        "Testing framework is configured",
+        "All core business logic has tests",
+        "Test coverage >80% for app/lib/*",
+        "All tests pass consistently"
+      ]
+    },
+    {
+      "id": "add-integration-tests",
+      "category": "quality",
+      "priority": "medium",
+      "description": "Add integration tests for API routes",
+      "steps": [
+        "Set up API testing (supertest or similar)",
+        "Add tests for /api/trends route",
+        "Add tests for /api/score route",
+        "Add tests for /api/recommendations route",
+        "Add tests for /api/profile route",
+        "Mock external dependencies (SerpAPI, OpenAI)",
+        "Test authentication flows",
+        "Test error handling"
+      ],
+      "passes": false,
+      "acceptanceCriteria": [
+        "All API routes have integration tests",
+        "Tests cover happy paths and error cases",
+        "Tests mock external dependencies",
+        "Tests verify authentication/authorization"
+      ]
+    }
+  ],
+  "qualityStandards": {
+    "testCoverage": 80,
+    "maxFunctionLength": 50,
+    "maxFileLength": 300,
+    "requireTypes": true,
+    "requireTests": true,
+    "noAnyTypes": true,
+    "strictNullChecks": true
+  },
+  "feedbackLoops": [
+    "tsc --noEmit",
+    "npm run lint",
+    "npm run build",
+    "npm test"
+  ]
+}

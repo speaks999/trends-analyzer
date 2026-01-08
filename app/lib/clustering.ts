@@ -1,7 +1,10 @@
 // Opportunity aggregation/clustering
 
-import { storage, OpportunityCluster, Query } from './storage';
-import { calculateTOS } from './scoring';
+import { storage as defaultStorage, OpportunityCluster, Query } from './storage';
+import type { DatabaseStorage } from './storage-db';
+
+// Storage interface for dependency injection
+type StorageInstance = DatabaseStorage;
 
 // Re-export types for convenience
 export type { OpportunityCluster } from './storage';
@@ -60,19 +63,21 @@ function generateClusterName(queries: Query[], intent: string): string {
 /**
  * Cluster queries into opportunity groups
  */
-export function clusterQueries(
-  similarityThreshold: number = 0.3
-): OpportunityCluster[] {
-  const queries = storage.getAllQueries();
+export async function clusterQueries(
+  similarityThreshold: number = 0.3,
+  storageInstance?: StorageInstance
+): Promise<OpportunityCluster[]> {
+  const storage = storageInstance || defaultStorage;
+  const queries = await storage.getAllQueries();
   const clusters: OpportunityCluster[] = [];
   const assigned = new Set<string>();
 
   // Get intent for each query
   const queryIntents = new Map<string, string>();
-  queries.forEach(query => {
-    const classification = storage.getIntentClassification(query.id);
+  for (const query of queries) {
+    const classification = await storage.getIntentClassification(query.id);
     queryIntents.set(query.id, classification?.intent_type || 'education');
-  });
+  }
 
   // Group by intent first
   const queriesByIntent = new Map<string, Query[]>();
@@ -85,11 +90,11 @@ export function clusterQueries(
   });
 
   // Cluster within each intent group
-  queriesByIntent.forEach((intentQueries, intent) => {
+  for (const [intent, intentQueries] of queriesByIntent.entries()) {
     const intentClusters: Query[][] = [];
 
-    intentQueries.forEach(query => {
-      if (assigned.has(query.id)) return;
+    for (const query of intentQueries) {
+      if (assigned.has(query.id)) continue;
 
       // Find existing cluster to join or create new one
       let addedToCluster = false;
@@ -113,31 +118,43 @@ export function clusterQueries(
         intentClusters.push([query]);
         assigned.add(query.id);
       }
-    });
+    }
 
     // Create OpportunityCluster objects
-    intentClusters.forEach(clusterQueries => {
-      if (clusterQueries.length === 0) return;
+    for (const clusterQueries of intentClusters) {
+      if (clusterQueries.length === 0) continue;
 
-      const queryIds = clusterQueries.map(q => q.id);
-      const scores = queryIds.map(id => {
-        const score = calculateTOS(id);
-        return score.score;
-      });
+      const queryIds = clusterQueries.map(q => q.id).sort(); // Sort for consistent comparison
+      
+      // Check if a cluster with these exact queries already exists
+      const existingClusterId = await storage.findExistingClusterWithQueries(queryIds);
+      if (existingClusterId) {
+        // Cluster already exists, fetch it and add to results
+        const existingCluster = await storage.getCluster(existingClusterId);
+        if (existingCluster) {
+          clusters.push(existingCluster);
+        }
+        continue; // Skip creating a duplicate
+      }
+
+      const { calculateTOSForQueries } = await import('./scoring');
+      const scoresResult = await calculateTOSForQueries(queryIds, '30d');
+      const scores = scoresResult.map(s => s.score);
       const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
 
-      const cluster: OpportunityCluster = {
-        id: `cluster_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      // Create cluster object without ID - let database generate UUID
+      const clusterToAdd = {
         name: generateClusterName(clusterQueries, intent),
         intent_type: intent as 'pain' | 'tool' | 'transition' | 'education',
         average_score: Math.round(averageScore),
         queries: queryIds,
       };
 
+      // Add to database and get back the cluster with the database-generated UUID
+      const cluster = await storage.addCluster(clusterToAdd);
       clusters.push(cluster);
-      storage.addCluster(cluster);
-    });
-  });
+    }
+  }
 
   return clusters;
 }
@@ -145,34 +162,40 @@ export function clusterQueries(
 /**
  * Get clusters for queries
  */
-export function getClusters(): OpportunityCluster[] {
-  return storage.getAllClusters();
+export async function getClusters(storageInstance?: StorageInstance): Promise<OpportunityCluster[]> {
+  const storage = storageInstance || defaultStorage;
+  return await storage.getAllClusters();
 }
 
 /**
  * Get cluster by ID
  */
-export function getCluster(clusterId: string): OpportunityCluster | undefined {
-  return storage.getCluster(clusterId);
+export async function getCluster(clusterId: string, storageInstance?: StorageInstance): Promise<OpportunityCluster | undefined> {
+  const storage = storageInstance || defaultStorage;
+  return await storage.getCluster(clusterId);
 }
 
 /**
  * Re-cluster all queries (clears existing clusters first)
  */
-export function reclusterQueries(similarityThreshold: number = 0.3): OpportunityCluster[] {
+export async function reclusterQueries(similarityThreshold: number = 0.3, storageInstance?: StorageInstance): Promise<OpportunityCluster[]> {
+  const storage = storageInstance || defaultStorage;
   // Clear existing clusters
-  const existingClusters = storage.getAllClusters();
-  existingClusters.forEach(cluster => storage.removeCluster(cluster.id));
+  const existingClusters = await storage.getAllClusters();
+  for (const cluster of existingClusters) {
+    await storage.removeCluster(cluster.id);
+  }
 
   // Create new clusters
-  return clusterQueries(similarityThreshold);
+  return await clusterQueries(similarityThreshold, storageInstance);
 }
 
 /**
  * Get top clusters by average score
  */
-export function getTopClusters(limit: number = 10): OpportunityCluster[] {
-  const clusters = storage.getAllClusters();
+export async function getTopClusters(limit: number = 10, storageInstance?: StorageInstance): Promise<OpportunityCluster[]> {
+  const storage = storageInstance || defaultStorage;
+  const clusters = await storage.getAllClusters();
   return clusters
     .sort((a, b) => b.average_score - a.average_score)
     .slice(0, limit);
