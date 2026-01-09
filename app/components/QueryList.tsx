@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Query, IntentClassification, RelatedTopic, RelatedQuestion } from '@/app/lib/storage';
 import IntentBadges from './IntentBadges';
 import { useAuthHeaders } from '@/app/lib/hooks/useAuthHeaders';
@@ -41,9 +41,12 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(new Set());
   const [generatingArticle, setGeneratingArticle] = useState<Map<string, ArticlePlatform>>(new Map());
   const [articles, setArticles] = useState<Map<string, GeneratedArticle>>(new Map());
+  const fetchedQueriesRef = useRef<Set<string>>(new Set()); // Track which queries we've attempted to fetch (using ref to avoid dependency issues)
 
   // Fetch data for a single query
   const fetchQueryData = useCallback(async (query: Query) => {
+    // Mark as fetched immediately to prevent duplicate calls
+    setFetchedQueries(prev => new Set(prev).add(query.id));
     setLoadingQueries(prev => new Set(prev).add(query.id));
     
     try {
@@ -140,8 +143,12 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
     if (queries.length === 0) return;
 
     queries.forEach(query => {
-      // Only fetch if we don't already have data for this query
-      if (!relatedTopics.has(query.id) && !relatedQuestions.has(query.id) && !loadingQueries.has(query.id)) {
+      // Only fetch if we haven't already attempted to fetch this query
+      // and we don't already have data for it
+      if (!fetchedQueriesRef.current.has(query.id) && 
+          !relatedTopics.has(query.id) && 
+          !relatedQuestions.has(query.id) && 
+          !loadingQueries.has(query.id)) {
         fetchQueryData(query);
       }
     });
@@ -170,6 +177,12 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
       const newMap = new Map(prev);
       newMap.delete(query.id);
       return newMap;
+    });
+    // Clear the fetched flag so it can be fetched again
+    setFetchedQueries(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(query.id);
+      return newSet;
     });
     
     // Force re-fetch from SERPAPI
@@ -224,6 +237,7 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
         newSet.delete(query.id);
         return newSet;
       });
+      fetchedQueriesRef.current.delete(query.id);
       
       // Call the parent's onRemove to delete from database
       onRemove(query.id);
