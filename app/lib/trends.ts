@@ -303,7 +303,21 @@ export async function getRelatedTopics(
     const data = await response.json();
 
     if (data.error) {
+      // Handle "no results" case gracefully - this is normal for some queries
+      const errorMessage = String(data.error).toLowerCase();
+      if (errorMessage.includes('hasn\'t returned any results') || 
+          errorMessage.includes('no results') ||
+          errorMessage.includes('insufficient data')) {
+        // This is expected for some queries - return empty array without logging as error
+        return [];
+      }
+      // For other errors, still throw but they'll be caught and logged
       throw new Error(`SerpApi error: ${data.error}`);
+    }
+
+    // Check if related_topics exists - if not, return empty array (no results available)
+    if (!data.related_topics) {
+      return [];
     }
 
     // SerpApi returns related_topics with rising and top arrays
@@ -369,7 +383,13 @@ export async function getRelatedTopics(
     // Filter out empty topics
     return related.filter(t => t.topic);
   } catch (error) {
-    console.error(`Error fetching related topics for ${keyword}:`, error);
+    // Only log as error if it's not a "no results" case
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (!errorMessage.toLowerCase().includes('hasn\'t returned any results') &&
+        !errorMessage.toLowerCase().includes('no results') &&
+        !errorMessage.toLowerCase().includes('insufficient data')) {
+      console.error(`Error fetching related topics for ${keyword}:`, error);
+    }
     return [];
   }
 }
