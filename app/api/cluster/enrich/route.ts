@@ -4,6 +4,8 @@ import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 import { getRelatedTopics } from '@/app/lib/trends';
 import { getRelatedQuestions } from '@/app/lib/search-intent';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);

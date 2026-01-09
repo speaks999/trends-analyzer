@@ -11,7 +11,13 @@ export async function getAuthenticatedSupabaseClient(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
 
+  // During build time (when collecting page data), handle missing env vars gracefully
+  // This prevents build failures - the route will error at runtime if actually called
   if (!supabaseUrl || !supabaseKey) {
+    // Check if we're in build mode (no request context or during static generation)
+    if (typeof request === 'undefined' || !request.url) {
+      throw new Error('Supabase configuration is missing - ensure environment variables are set');
+    }
     throw new Error('Supabase configuration is missing');
   }
 

@@ -5,6 +5,8 @@ import { getTrendData, TimeWindow, GeoRegion } from '@/app/lib/trends';
 import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 import { calculateTOSForQueries } from '@/app/lib/scoring';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     // Get authenticated storage instance for this user

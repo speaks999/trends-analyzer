@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 import { generateQueryArticle, ArticlePlatform } from '@/app/lib/article-generator';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }

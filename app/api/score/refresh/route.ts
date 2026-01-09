@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { calculateTOSForQueries, getTopQueriesByTOS } from '@/app/lib/scoring';
 import { getAuthenticatedStorage } from '@/app/lib/auth-helpers';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const storage = await getAuthenticatedStorage(request);

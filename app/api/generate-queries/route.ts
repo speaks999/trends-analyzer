@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateQueries, QueryGenerationOptions } from '@/app/lib/openai';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     // Check if OpenAI API key is configured

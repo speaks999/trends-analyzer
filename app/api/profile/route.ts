@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedSupabaseClient } from '@/app/lib/auth-helpers';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     // Get authenticated Supabase client (uses user's access token from header/cookies)
