@@ -44,7 +44,7 @@ export default function AISuggestions({ onAddQuery }: AISuggestionsProps) {
 
   return (
     <div className="border rounded-lg p-4">
-      <h2 className="text-xl font-bold mb-4">AI Query Suggestions</h2>
+      <h2 className="text-xl font-bold mb-4 text-gray-900">AI Query Suggestions</h2>
       
       <div className="flex gap-2 mb-4">
         <input
@@ -53,12 +53,12 @@ export default function AISuggestions({ onAddQuery }: AISuggestionsProps) {
           max="50"
           value={count}
           onChange={(e) => setCount(Number(e.target.value))}
-          className="w-20 px-2 py-1 border border-gray-300 rounded"
+          className="w-20 px-2 py-1 border border-gray-300 rounded text-gray-900 bg-white"
         />
         <select
           value={focus}
           onChange={(e) => setFocus(e.target.value as any)}
-          className="px-3 py-1 border border-gray-300 rounded"
+          className="px-3 py-1 border border-gray-300 rounded text-gray-900 bg-white"
         >
           <option value="all">All</option>
           <option value="pain">Pain</option>
@@ -77,13 +77,13 @@ export default function AISuggestions({ onAddQuery }: AISuggestionsProps) {
 
       {suggestions.length > 0 && (
         <div className="space-y-2">
-          <h3 className="font-semibold">Suggestions ({suggestions.length}):</h3>
+          <h3 className="font-semibold text-gray-900">Suggestions ({suggestions.length}):</h3>
           {suggestions.map((suggestion, index) => (
             <div
               key={index}
-              className="flex items-center justify-between p-2 border rounded hover:bg-gray-50"
+              className="flex items-center justify-between p-2 border border-gray-300 rounded hover:bg-gray-50 bg-white"
             >
-              <span className="flex-1">{suggestion.text}</span>
+              <span className="flex-1 text-gray-900 font-medium">{suggestion.text}</span>
               <button
                 onClick={() => onAddQuery(suggestion.text)}
                 className="ml-2 px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"

@@ -19,6 +19,7 @@ export interface ClassificationResult {
   query_id: string;
   intent_type: IntentType;
   confidence: number;
+  subcategory?: string;
 }
 
 /**
@@ -75,6 +76,81 @@ function classifyByRules(queryText: string): { intent: IntentType; confidence: n
     intent: selected.intent,
     confidence: Math.round(confidence),
   };
+}
+
+/**
+ * Analyze intent from multiple data sources
+ */
+export async function analyzeIntentFromMultipleSources(
+  queryId: string,
+  queryText: string,
+  relatedTopics?: Array<{ topic: string; value: number }>,
+  paaQuestions?: Array<{ question: string; answer?: string }>
+): Promise<ClassificationResult & { subcategory?: string }> {
+  if (!openai) {
+    // Fallback to basic classification if OpenAI not available
+    const basic = await classifyIntent(queryId, queryText);
+    return basic;
+  }
+
+  try {
+    // Build context from all sources
+    const contextParts: string[] = [];
+    
+    if (relatedTopics && relatedTopics.length > 0) {
+      contextParts.push(`Related Topics: ${relatedTopics.slice(0, 5).map(t => t.topic).join(', ')}`);
+    }
+    
+    if (paaQuestions && paaQuestions.length > 0) {
+      contextParts.push(`People Also Ask: ${paaQuestions.slice(0, 3).map(q => q.question).join('; ')}`);
+    }
+
+    const context = contextParts.length > 0 ? `\n\nAdditional Context:\n${contextParts.join('\n')}` : '';
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an expert at classifying search queries by intent. Classify queries into one of these categories:
+- pain: Problems, struggles, challenges entrepreneurs face
+- tool: Software, systems, platforms, solutions
+- transition: Business changes, scaling, exits, migrations
+- education: How-to guides, tutorials, learning, best practices
+
+For each category, also identify the sub-category:
+- Pain: Financial, Operational, Growth, Team, Customer
+- Tool: CRM, Analytics, Automation, Communication, Marketing
+- Transition: Scaling, Pivot, Exit, Acquisition, IPO
+- Education: Strategy, Tactics, Case Studies, Frameworks
+
+Respond with ONLY a JSON object: {"intent": "pain|tool|transition|education", "subcategory": "subcategory name", "confidence": 0-100}`,
+        },
+        {
+          role: 'user',
+          content: `Classify this query: "${queryText}"${context}`,
+        },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (response) {
+      const parsed = JSON.parse(response);
+      return {
+        query_id: queryId,
+        intent_type: parsed.intent || 'education',
+        confidence: Math.min(100, Math.max(0, parsed.confidence || 50)),
+        subcategory: parsed.subcategory || undefined,
+      };
+    }
+  } catch (error) {
+    console.error('Error analyzing intent from multiple sources:', error);
+  }
+
+  // Fallback to basic classification
+  return await classifyIntent(queryId, queryText);
 }
 
 /**
@@ -144,6 +220,7 @@ Respond with ONLY a JSON object: {"intent": "pain|tool|transition|education", "c
     query_id: queryId,
     intent_type: result.intent,
     confidence: result.confidence,
+    subcategory: (result as any).subcategory || undefined,
   };
   await storage.setIntentClassification(classification);
 
@@ -151,6 +228,7 @@ Respond with ONLY a JSON object: {"intent": "pain|tool|transition|education", "c
     query_id: queryId,
     intent_type: result.intent,
     confidence: result.confidence,
+    subcategory: (result as any).subcategory || undefined,
   };
 }
 

@@ -191,6 +191,97 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Fetch and store related topics and PAA data for EACH query individually
+    // This ensures each query gets its own specific related topics and PAA questions
+    const storagePromises: Promise<void>[] = [];
+    
+    // Import functions for fetching intent data
+    const { getRelatedTopics } = await import('@/app/lib/trends');
+    const { getPeopleAlsoAsk } = await import('@/app/lib/search-intent');
+    
+    // Process each resolved query individually
+    for (const resolvedItem of resolved) {
+      if (!resolvedItem.queryId || !resolvedItem.originalQuery) continue;
+      
+      // Fetch related topics for this specific query
+      try {
+        const queryRelatedTopics = await getRelatedTopics(resolvedItem.originalQuery);
+        if (queryRelatedTopics.length > 0) {
+          console.log(`[Trends API] Storing ${queryRelatedTopics.length} related topics for query ${resolvedItem.queryId} (${resolvedItem.originalQuery})`);
+          storagePromises.push(
+            storage.saveRelatedTopics(resolvedItem.queryId, queryRelatedTopics.map(t => {
+              // Ensure value is a number - handle "Breakout" and other string values
+              let numericValue: number = typeof t.value === 'number' ? t.value : 0;
+              const valueStr = String(t.value || '');
+              if (valueStr.toLowerCase() === 'breakout' || valueStr.includes('%')) {
+                numericValue = 100; // High value for breakout topics
+              } else if (typeof t.value === 'string') {
+                const parsed = parseFloat(t.value);
+                numericValue = isNaN(parsed) ? 0 : parsed;
+              }
+              return {
+                topic: t.topic,
+                value: numericValue,
+                is_rising: t.isRising,
+                link: t.link,
+              };
+            })).catch(err => {
+              console.warn(`Error storing related topics for query ${resolvedItem.queryId}:`, err);
+            })
+          );
+        }
+      } catch (error) {
+        console.warn(`Error fetching related topics for query ${resolvedItem.originalQuery}:`, error);
+      }
+      
+      // Fetch PAA questions for this specific query
+      try {
+        const queryPaa = await getPeopleAlsoAsk(resolvedItem.originalQuery);
+        if (queryPaa.length > 0) {
+          console.log(`[Trends API] Storing ${queryPaa.length} PAA questions for query ${resolvedItem.queryId} (${resolvedItem.originalQuery})`);
+          storagePromises.push(
+            storage.savePeopleAlsoAsk(resolvedItem.queryId, queryPaa.map(p => ({
+              question: p.question,
+              answer: p.answer,
+              snippet: p.snippet,
+              title: p.title,
+              link: p.link,
+            }))).catch(err => {
+              console.warn(`Error storing PAA data for query ${resolvedItem.queryId}:`, err);
+            })
+          );
+        }
+      } catch (error) {
+        console.warn(`Error fetching PAA for query ${resolvedItem.originalQuery}:`, error);
+      }
+    }
+
+    // Wait for storage to complete before aggregating clusters
+    if (storagePromises.length > 0) {
+      await Promise.all(storagePromises);
+      console.log('[Trends API] Related topics and PAA data stored successfully');
+    }
+
+    // Update clusters with aggregated intent data (async, don't wait)
+    // Find all clusters that contain the queries we just updated
+    if (resolved.length > 0) {
+      const queryIds = resolved.filter(r => r.queryId).map(r => r.queryId!);
+      if (queryIds.length > 0) {
+        // Get all clusters and update those that contain these queries
+        storage.getAllClusters().then(clusters => {
+          for (const cluster of clusters) {
+            const hasMatchingQuery = cluster.queries.some(qId => queryIds.includes(qId));
+            if (hasMatchingQuery) {
+              // Aggregate and update cluster intent data
+              storage.aggregateClusterIntentData(cluster.id).catch(err => 
+                console.warn(`Error updating cluster ${cluster.id} intent data:`, err)
+              );
+            }
+          }
+        }).catch(err => console.warn('Error updating clusters with intent data:', err));
+      }
+    }
+
     return NextResponse.json({
       success: true,
       resolved: resolved.map(r => ({ originalQuery: r.originalQuery, keywordUsed: r.originalQuery })),

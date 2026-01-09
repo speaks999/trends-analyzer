@@ -31,10 +31,20 @@ export interface RelatedQuery {
   isRising: boolean;
 }
 
+// RelatedTopic interface is defined in storage.ts - import it when needed
+export type RelatedTopic = {
+  topic: string;
+  value: number;
+  isRising: boolean;
+  link?: string;
+};
+
 export interface TrendResult {
   interestOverTime: InterestOverTimeResult[];
   regionalInterest?: RegionalInterest[];
   relatedQueries?: RelatedQuery[];
+  relatedTopics?: RelatedTopic[];
+  peopleAlsoAsk?: import('./search-intent').PeopleAlsoAskResponse[];
 }
 
 /**
@@ -264,6 +274,107 @@ export async function getInterestByRegion(
 }
 
 /**
+ * Fetch related topics using SerpApi
+ */
+export async function getRelatedTopics(
+  keyword: string
+): Promise<RelatedTopic[]> {
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) {
+    throw new Error('SERPAPI_API_KEY is not configured');
+  }
+
+  try {
+    const params = new URLSearchParams({
+      engine: 'google_trends',
+      q: keyword,
+      api_key: apiKey,
+      date: 'today 12-m',
+      data_type: 'RELATED_TOPICS',
+    });
+
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(`SerpApi error: ${data.error}`);
+    }
+
+    // SerpApi returns related_topics with rising and top arrays
+    const risingTopics = data.related_topics?.rising || [];
+    const topTopics = data.related_topics?.top || [];
+
+    // Helper to parse value - SERPAPI may return "Breakout" or other strings
+    const parseTopicValue = (rawValue: any): number => {
+      if (typeof rawValue === 'number') {
+        return rawValue;
+      }
+      if (typeof rawValue === 'string') {
+        // Handle "Breakout" or other special strings
+        if (rawValue.toLowerCase() === 'breakout' || rawValue.toLowerCase() === '+5000%') {
+          return 100; // High value for breakout topics
+        }
+        // Try to parse as number
+        const parsed = parseFloat(rawValue);
+        if (!isNaN(parsed)) {
+          return parsed;
+        }
+      }
+      // Try extracted_value as fallback
+      return 0;
+    };
+
+    // Helper to extract topic title - SERPAPI returns nested objects
+    const extractTopicTitle = (item: any): string => {
+      // Check for nested topic.title (most common SERPAPI format)
+      if (item.topic && typeof item.topic === 'object' && item.topic.title) {
+        return item.topic.title;
+      }
+      // Check for direct topic string
+      if (item.topic && typeof item.topic === 'string') {
+        return item.topic;
+      }
+      // Fallback to title
+      if (item.title && typeof item.title === 'string') {
+        return item.title;
+      }
+      // Fallback to query
+      if (item.query && typeof item.query === 'string') {
+        return item.query;
+      }
+      return '';
+    };
+
+    const related: RelatedTopic[] = [
+      ...risingTopics.map((item: any) => ({
+        topic: extractTopicTitle(item),
+        value: parseTopicValue(item.value || item.extracted_value),
+        isRising: true,
+        link: item.link || (item.topic && item.topic.serpapi_link) || undefined,
+      })),
+      ...topTopics.map((item: any) => ({
+        topic: extractTopicTitle(item),
+        value: parseTopicValue(item.value || item.extracted_value),
+        isRising: false,
+        link: item.link || (item.topic && item.topic.serpapi_link) || undefined,
+      })),
+    ];
+
+    // Filter out empty topics
+    return related.filter(t => t.topic);
+  } catch (error) {
+    console.error(`Error fetching related topics for ${keyword}:`, error);
+    return [];
+  }
+}
+
+/**
  * Fetch related queries using SerpApi
  */
 export async function getRelatedQueries(
@@ -471,13 +582,84 @@ export async function getTrendData(
     }
   }
 
-  // Fetch related queries (only for first keyword if multiple)
+  // Fetch related queries for ALL keywords (not just first)
   let relatedQueries: RelatedQuery[] | undefined;
   if (includeRelated && keywords.length > 0) {
     try {
-      relatedQueries = await getRelatedQueries(keywords[0]);
+      // Fetch for all keywords and combine
+      const allRelatedQueries = await Promise.all(
+        keywords.map(keyword => getRelatedQueries(keyword).catch(() => []))
+      );
+      // Combine and deduplicate by query text
+      const queryMap = new Map<string, RelatedQuery>();
+      allRelatedQueries.flat().forEach(q => {
+        const key = q.query.toLowerCase();
+        if (!queryMap.has(key) || q.isRising) {
+          queryMap.set(key, q);
+        }
+      });
+      relatedQueries = Array.from(queryMap.values());
+      if (relatedQueries.length === 0) {
+        relatedQueries = undefined;
+      }
     } catch (error) {
       console.error('Error fetching related queries:', error);
+    }
+  }
+
+  // Fetch related topics for ALL keywords (not just first)
+  let relatedTopics: RelatedTopic[] | undefined;
+  if (includeRelated && keywords.length > 0) {
+    try {
+      // Fetch for all keywords and combine
+      const allRelatedTopics = await Promise.all(
+        keywords.map(keyword => getRelatedTopics(keyword).catch(() => []))
+      );
+      // Combine and deduplicate by topic text, prefer rising topics
+      const topicMap = new Map<string, RelatedTopic>();
+      allRelatedTopics.flat().forEach(t => {
+        // Ensure t.topic is a valid string
+        if (!t || !t.topic || typeof t.topic !== 'string') return;
+        const key = t.topic.toLowerCase();
+        const existing = topicMap.get(key);
+        if (!existing || t.isRising || t.value > existing.value) {
+          topicMap.set(key, t);
+        }
+      });
+      relatedTopics = Array.from(topicMap.values());
+      if (relatedTopics.length === 0) {
+        relatedTopics = undefined; // Don't include empty array in response
+      }
+    } catch (error) {
+      console.error('Error fetching related topics:', error);
+    }
+  }
+
+  // Fetch People Also Ask questions for ALL keywords (not just first)
+  let peopleAlsoAsk: import('./search-intent').PeopleAlsoAskResponse[] | undefined;
+  if (includeRelated && keywords.length > 0) {
+    try {
+      const { getPeopleAlsoAsk } = await import('./search-intent');
+      // Fetch for all keywords and combine
+      const allPaaData = await Promise.all(
+        keywords.map(keyword => getPeopleAlsoAsk(keyword).catch(() => []))
+      );
+      // Combine and deduplicate by question text
+      const questionMap = new Map<string, import('./search-intent').PeopleAlsoAskResponse>();
+      allPaaData.flat().forEach(p => {
+        // Ensure p.question is a valid string
+        if (!p || !p.question || typeof p.question !== 'string') return;
+        const key = p.question.toLowerCase();
+        if (!questionMap.has(key)) {
+          questionMap.set(key, p);
+        }
+      });
+      const combinedPaa = Array.from(questionMap.values());
+      if (combinedPaa.length > 0) {
+        peopleAlsoAsk = combinedPaa;
+      }
+    } catch (error) {
+      console.error('Error fetching People Also Ask:', error);
     }
   }
 
@@ -485,6 +667,8 @@ export async function getTrendData(
     interestOverTime,
     regionalInterest,
     relatedQueries,
+    relatedTopics,
+    peopleAlsoAsk,
   };
 }
 

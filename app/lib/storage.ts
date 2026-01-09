@@ -37,13 +37,44 @@ export interface OpportunityCluster {
   intent_type: 'pain' | 'tool' | 'transition' | 'education';
   average_score: number;
   queries: string[]; // Query IDs
+  related_topics?: RelatedTopic[];
+  paa_questions?: PeopleAlsoAsk[];
 }
 
 export interface IntentClassification {
   query_id: string;
   intent_type: 'pain' | 'tool' | 'transition' | 'education';
   confidence: number;
+  subcategory?: string;
 }
+
+export interface RelatedTopic {
+  id?: string;
+  query_id: string;
+  topic: string;
+  value: number;
+  is_rising: boolean;
+  link?: string;
+  created_at?: Date;
+}
+
+// Renamed from PeopleAlsoAsk to RelatedQuestion
+// Now using Google Related Questions API: https://serpapi.com/google-related-questions-api
+export interface RelatedQuestion {
+  id?: string;
+  query_id: string;
+  question: string;
+  answer?: string;
+  snippet?: string;
+  title?: string;
+  link?: string;
+  source_logo?: string;
+  created_at?: Date;
+}
+
+// Backward compatibility alias (deprecated)
+export type PeopleAlsoAsk = RelatedQuestion;
+
 
 export interface EntrepreneurProfile {
   id?: string;

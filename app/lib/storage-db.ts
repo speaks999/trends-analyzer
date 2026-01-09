@@ -4,7 +4,7 @@
 
 import { supabase as clientSupabase } from './supabase-client';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Query, TrendSnapshot, TrendScore, OpportunityCluster, IntentClassification, EntrepreneurProfile } from './storage';
+import type { Query, TrendSnapshot, TrendScore, OpportunityCluster, IntentClassification, EntrepreneurProfile, RelatedTopic, RelatedQuestion, PeopleAlsoAsk } from './storage';
 
 // Type assertion helper to work around Database type issues until types are regenerated
 const defaultTypedSupabase = clientSupabase as any;
@@ -502,12 +502,46 @@ export class DatabaseStorage {
       console.error('Error fetching cluster queries:', queryError);
     }
 
+    // Parse JSONB fields if they exist
+    let relatedTopics: RelatedTopic[] | undefined;
+    if (clusterData.related_topics) {
+      if (Array.isArray(clusterData.related_topics)) {
+        relatedTopics = clusterData.related_topics.map((t: any) => ({
+          id: t.id,
+          query_id: t.query_id || '',
+          topic: t.topic,
+          value: typeof t.value === 'number' ? t.value : parseFloat(t.value) || 0,
+          is_rising: t.is_rising || t.isRising || false,
+          link: t.link,
+          created_at: t.created_at ? new Date(t.created_at) : undefined,
+        }));
+      }
+    }
+
+    let paaQuestions: PeopleAlsoAsk[] | undefined;
+    if (clusterData.paa_questions) {
+      if (Array.isArray(clusterData.paa_questions)) {
+        paaQuestions = clusterData.paa_questions.map((p: any) => ({
+          id: p.id,
+          query_id: p.query_id || '',
+          question: p.question,
+          answer: p.answer,
+          snippet: p.snippet,
+          title: p.title,
+          link: p.link,
+          created_at: p.created_at ? new Date(p.created_at) : undefined,
+        }));
+      }
+    }
+
     return {
       id: clusterData.id,
       name: clusterData.name,
       intent_type: clusterData.intent_type,
       average_score: clusterData.average_score,
       queries: (queryData || []).map((q: any) => q.query_id),
+      related_topics: relatedTopics,
+      paa_questions: paaQuestions,
     };
   }
 
@@ -569,11 +603,19 @@ export class DatabaseStorage {
   async getAllClusters(): Promise<OpportunityCluster[]> {
     const userId = await this.getCurrentUserId();
     
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:603',message:'getAllClusters entry',data:{userId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    
     const { data: clusters, error } = await this.supabase
       .from('opportunity_clusters')
       .select('*')
       .eq('user_id', userId)
       .order('average_score', { ascending: false});
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:610',message:'getAllClusters DB result',data:{clusterCount:clusters?.length||0,error:error?.message,clusterIds:clusters?.map((c:any)=>c.id)||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
 
     if (error) {
       console.error('Error fetching clusters:', error);
@@ -597,13 +639,55 @@ export class DatabaseStorage {
       queryMap.get(rel.cluster_id)!.push(rel.query_id);
     });
 
-    return (clusters || []).map((cluster: any) => ({
-      id: cluster.id,
-      name: cluster.name,
-      intent_type: cluster.intent_type,
-      average_score: cluster.average_score,
-      queries: queryMap.get(cluster.id) || [],
-    }));
+    const mappedClusters = (clusters || []).map((cluster: any) => {
+      // Parse JSONB fields if they exist
+      let relatedTopics: RelatedTopic[] | undefined;
+      if (cluster.related_topics && Array.isArray(cluster.related_topics)) {
+        relatedTopics = cluster.related_topics.map((t: any) => ({
+          id: t.id,
+          query_id: t.query_id || '',
+          topic: t.topic,
+          value: typeof t.value === 'number' ? t.value : parseFloat(t.value) || 0,
+          is_rising: t.is_rising || t.isRising || false,
+          link: t.link,
+          created_at: t.created_at ? new Date(t.created_at) : undefined,
+        }));
+      }
+
+      let paaQuestions: PeopleAlsoAsk[] | undefined;
+      if (cluster.paa_questions && Array.isArray(cluster.paa_questions)) {
+        paaQuestions = cluster.paa_questions.map((p: any) => ({
+          id: p.id,
+          query_id: p.query_id || '',
+          question: p.question,
+          answer: p.answer,
+          snippet: p.snippet,
+          title: p.title,
+          link: p.link,
+          created_at: p.created_at ? new Date(p.created_at) : undefined,
+        }));
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:663',message:'Mapping cluster with intent data',data:{clusterId:cluster.id,hasRelatedTopics:!!relatedTopics,relatedTopicsCount:relatedTopics?.length||0,hasPaaQuestions:!!paaQuestions,paaQuestionsCount:paaQuestions?.length||0,rawRelatedTopics:typeof cluster.related_topics,rawPaaQuestions:typeof cluster.paa_questions},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H7'})}).catch(()=>{});
+      // #endregion
+
+      return {
+        id: cluster.id,
+        name: cluster.name,
+        intent_type: cluster.intent_type,
+        average_score: cluster.average_score,
+        queries: queryMap.get(cluster.id) || [],
+        related_topics: relatedTopics,
+        paa_questions: paaQuestions,
+      };
+    });
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:673',message:'getAllClusters returning',data:{totalClusters:mappedClusters.length,clusterIds:mappedClusters.map((c:OpportunityCluster)=>c.id),duplicateIds:mappedClusters.map((c:OpportunityCluster)=>c.id).filter((id:string,i:number,arr:string[])=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    
+    return mappedClusters;
   }
 
   async updateCluster(id: string, updates: Partial<OpportunityCluster>): Promise<boolean> {
@@ -668,6 +752,7 @@ export class DatabaseStorage {
         query_id: classification.query_id,
         intent_type: classification.intent_type,
         confidence: classification.confidence,
+        subcategory: classification.subcategory || null,
       }, {
         onConflict: 'query_id',
       });
@@ -700,6 +785,7 @@ export class DatabaseStorage {
         query_id: data.query_id,
         intent_type: data.intent_type,
         confidence: data.confidence,
+        subcategory: data.subcategory || undefined,
       };
     } catch (error) {
       console.error('Unexpected error in getIntentClassification:', error);
@@ -721,6 +807,7 @@ export class DatabaseStorage {
       query_id: item.query_id,
       intent_type: item.intent_type,
       confidence: item.confidence,
+      subcategory: item.subcategory || undefined,
     }));
   }
 
@@ -844,6 +931,295 @@ export class DatabaseStorage {
       created_at: row.created_at ? new Date(row.created_at) : undefined,
       updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
     };
+  }
+
+  // Related Topics management
+  async saveRelatedTopics(queryId: string, topics: Omit<RelatedTopic, 'id' | 'query_id' | 'created_at'>[]): Promise<void> {
+    if (topics.length === 0) return;
+
+    // Filter out invalid topics (must have a valid topic string)
+    const validTopics = topics.filter(topic => {
+      return topic && 
+             typeof topic.topic === 'string' && 
+             topic.topic.trim().length > 0;
+    });
+
+    if (validTopics.length === 0) {
+      console.warn('No valid topics to save after filtering');
+      return;
+    }
+
+    // Deduplicate topics by topic name (case-insensitive) - keep the one with highest value or is_rising=true
+    const topicMap = new Map<string, Omit<RelatedTopic, 'id' | 'query_id' | 'created_at'>>();
+    for (const topic of validTopics) {
+      // Type assertion is safe here because we filtered above
+      const topicStr = String(topic.topic).trim();
+      if (!topicStr) continue; // Skip empty strings after trimming
+      
+      const key = topicStr.toLowerCase();
+      const existing = topicMap.get(key);
+      if (!existing) {
+        topicMap.set(key, topic);
+      } else {
+        // Keep the one with higher value, or prefer rising topics
+        if (topic.is_rising || (!existing.is_rising && topic.value > existing.value)) {
+          topicMap.set(key, topic);
+        }
+      }
+    }
+
+    const uniqueTopics = Array.from(topicMap.values());
+
+    const { error } = await this.supabase
+      .from('related_topics')
+      .upsert(
+        uniqueTopics.map(topic => ({
+          query_id: queryId,
+          topic: String(topic.topic).trim(),
+          value: typeof topic.value === 'number' ? topic.value : parseFloat(String(topic.value)) || 0,
+          is_rising: topic.is_rising || false,
+          link: topic.link || null,
+        })),
+        {
+          onConflict: 'query_id,topic',
+        }
+      );
+
+    if (error) {
+      console.error('Error saving related topics:', error);
+      throw new Error(`Failed to save related topics: ${error.message}`);
+    }
+  }
+
+  async getRelatedTopics(queryId: string): Promise<RelatedTopic[]> {
+    const { data, error } = await this.supabase
+      .from('related_topics')
+      .select('*')
+      .eq('query_id', queryId)
+      .order('value', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching related topics:', error);
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      query_id: row.query_id,
+      topic: row.topic,
+      value: parseFloat(row.value),
+      is_rising: row.is_rising,
+      link: row.link || undefined,
+      created_at: row.created_at ? new Date(row.created_at) : undefined,
+    }));
+  }
+
+  // Related Questions management (formerly People Also Ask)
+  // Using Google Related Questions API: https://serpapi.com/google-related-questions-api
+  async saveRelatedQuestions(queryId: string, questions: Omit<RelatedQuestion, 'id' | 'query_id' | 'created_at'>[]): Promise<void> {
+    if (questions.length === 0) return;
+
+    // Filter out invalid items (must have a valid question string)
+    const validQuestions = questions.filter(item => {
+      return item && 
+             typeof item.question === 'string' && 
+             item.question.trim().length > 0;
+    });
+
+    if (validQuestions.length === 0) {
+      console.warn('No valid Related Questions to save after filtering');
+      return;
+    }
+
+    // Deduplicate questions by question text (case-insensitive)
+    const questionMap = new Map<string, Omit<RelatedQuestion, 'id' | 'query_id' | 'created_at'>>();
+    for (const item of validQuestions) {
+      const questionStr = String(item.question).trim();
+      if (!questionStr) continue;
+      
+      const key = questionStr.toLowerCase();
+      if (!questionMap.has(key)) {
+        questionMap.set(key, item);
+      }
+    }
+
+    const uniqueQuestions = Array.from(questionMap.values());
+
+    const { error } = await this.supabase
+      .from('related_questions')
+      .upsert(
+        uniqueQuestions.map(item => ({
+          query_id: queryId,
+          question: String(item.question).trim(),
+          answer: item.answer || null,
+          snippet: item.snippet || null,
+          title: item.title || null,
+          link: item.link || null,
+          source_logo: item.source_logo || null,
+        })),
+        {
+          onConflict: 'query_id,question',
+        }
+      );
+
+    if (error) {
+      console.error('Error saving Related Questions:', error);
+      throw new Error(`Failed to save Related Questions: ${error.message}`);
+    }
+  }
+
+  async getRelatedQuestions(queryId: string): Promise<RelatedQuestion[]> {
+    const { data, error } = await this.supabase
+      .from('related_questions')
+      .select('*')
+      .eq('query_id', queryId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching Related Questions:', error);
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      query_id: row.query_id,
+      question: row.question,
+      answer: row.answer || undefined,
+      snippet: row.snippet || undefined,
+      title: row.title || undefined,
+      link: row.link || undefined,
+      source_logo: row.source_logo || undefined,
+      created_at: row.created_at ? new Date(row.created_at) : undefined,
+    }));
+  }
+
+  // Backward compatibility aliases (deprecated)
+  async savePeopleAlsoAsk(queryId: string, paa: Omit<PeopleAlsoAsk, 'id' | 'query_id' | 'created_at'>[]): Promise<void> {
+    return this.saveRelatedQuestions(queryId, paa);
+  }
+
+  async getPeopleAlsoAsk(queryId: string): Promise<PeopleAlsoAsk[]> {
+    return this.getRelatedQuestions(queryId);
+  }
+
+  // Update cluster with related topics and PAA questions
+  async updateClusterIntentData(
+    clusterId: string,
+    relatedTopics?: RelatedTopic[],
+    paaQuestions?: PeopleAlsoAsk[]
+  ): Promise<void> {
+    const updateData: any = {};
+    
+    if (relatedTopics) {
+      updateData.related_topics = relatedTopics.map(t => ({
+        topic: t.topic,
+        value: t.value,
+        is_rising: t.is_rising,
+        link: t.link,
+      }));
+    }
+    
+    if (paaQuestions) {
+      updateData.paa_questions = paaQuestions.map(p => ({
+        question: p.question,
+        answer: p.answer,
+        snippet: p.snippet,
+        title: p.title,
+        link: p.link,
+      }));
+    }
+
+    if (Object.keys(updateData).length === 0) return;
+
+    const { error } = await this.supabase
+      .from('opportunity_clusters')
+      .update(updateData)
+      .eq('id', clusterId);
+
+    if (error) {
+      console.error('Error updating cluster intent data:', error);
+      throw new Error(`Failed to update cluster intent data: ${error.message}`);
+    }
+  }
+
+  // Aggregate and update cluster intent data from all queries in the cluster
+  async aggregateClusterIntentData(clusterId: string): Promise<void> {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:1117',message:'aggregateClusterIntentData entry',data:{clusterId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H6'})}).catch(()=>{});
+    // #endregion
+    
+    try {
+      // Get cluster to find its queries
+      const cluster = await this.getCluster(clusterId);
+      if (!cluster || cluster.queries.length === 0) {
+        console.log(`[Aggregate Intent] Cluster ${clusterId} has no queries, skipping`);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:1122',message:'aggregateClusterIntentData skipped',data:{clusterId,reason:'no queries'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H6'})}).catch(()=>{});
+        // #endregion
+        return;
+      }
+
+      console.log(`[Aggregate Intent] Aggregating intent data for cluster ${clusterId} with ${cluster.queries.length} queries`);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:1126',message:'aggregateClusterIntentData processing',data:{clusterId,queryCount:cluster.queries.length,queryIds:cluster.queries},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H6'})}).catch(()=>{});
+      // #endregion
+
+      // Aggregate related topics from all queries in the cluster
+      const allRelatedTopics = new Map<string, RelatedTopic>();
+      for (const queryId of cluster.queries) {
+        const topics = await this.getRelatedTopics(queryId);
+        console.log(`[Aggregate Intent] Found ${topics.length} related topics for query ${queryId}`);
+        for (const topic of topics) {
+          // Ensure topic.topic is a valid string
+          if (!topic || !topic.topic || typeof topic.topic !== 'string') continue;
+          const key = topic.topic.toLowerCase();
+          if (!allRelatedTopics.has(key) || topic.is_rising) {
+            // Prefer rising topics, or keep the one with higher value
+            const existing = allRelatedTopics.get(key);
+            if (!existing || topic.value > existing.value || topic.is_rising) {
+              allRelatedTopics.set(key, topic);
+            }
+          }
+        }
+      }
+
+      // Aggregate PAA questions from all queries in the cluster
+      const allPaaQuestions = new Map<string, PeopleAlsoAsk>();
+      for (const queryId of cluster.queries) {
+        const paa = await this.getPeopleAlsoAsk(queryId);
+        console.log(`[Aggregate Intent] Found ${paa.length} PAA questions for query ${queryId}`);
+        for (const question of paa) {
+          // Ensure question.question is a valid string
+          if (!question || !question.question || typeof question.question !== 'string') continue;
+          const key = question.question.toLowerCase();
+          if (!allPaaQuestions.has(key)) {
+            allPaaQuestions.set(key, question);
+          }
+        }
+      }
+
+      // Update cluster with aggregated data
+      const relatedTopicsArray = Array.from(allRelatedTopics.values())
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 20); // Limit to top 20 topics
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/8ce0da79-350c-434f-b6da-582df7cea48e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage-db.ts:1188',message:'aggregateClusterIntentData before update',data:{clusterId,relatedTopicsCount:relatedTopicsArray.length,paaQuestionsCount:Array.from(allPaaQuestions.values()).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H6'})}).catch(()=>{});
+      // #endregion
+
+      const paaQuestionsArray = Array.from(allPaaQuestions.values())
+        .slice(0, 10); // Limit to top 10 questions
+
+      console.log(`[Aggregate Intent] Updating cluster ${clusterId} with ${relatedTopicsArray.length} topics and ${paaQuestionsArray.length} PAA questions`);
+
+      await this.updateClusterIntentData(clusterId, relatedTopicsArray, paaQuestionsArray);
+      
+      console.log(`[Aggregate Intent] Successfully updated cluster ${clusterId}`);
+    } catch (error) {
+      console.error(`[Aggregate Intent] Error aggregating cluster intent data for ${clusterId}:`, error);
+      // Don't throw - this is a background operation
+    }
   }
 }
 

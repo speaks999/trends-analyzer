@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { EntrepreneurProfile } from '@/app/lib/storage';
 import { useAuth } from '@/app/lib/auth-context';
 
@@ -10,15 +10,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const { session } = useAuth();
 
-  useEffect(() => {
-    if (session) {
-      loadProfile();
-    } else {
-      setLoading(false);
-    }
-  }, [session]);
-
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     if (!session) {
       setLoading(false);
       return;
@@ -43,7 +35,15 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [session]);
+
+  useEffect(() => {
+    if (session) {
+      loadProfile();
+    } else {
+      setLoading(false);
+    }
+  }, [session, loadProfile]);
 
   const handleSave = async () => {
     if (!session) {
@@ -103,7 +103,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold">Entrepreneur Profile Settings</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Entrepreneur Profile Settings</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700 text-2xl"

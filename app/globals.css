@@ -17,12 +17,20 @@
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
+  /* Default to dark text for light backgrounds */
+  color: #111827; /* gray-900 - ensures good contrast on light backgrounds */
   background: linear-gradient(
       to bottom,
       transparent,
       rgb(var(--background-end-rgb))
     )
     rgb(var(--background-start-rgb));
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    /* Light text for dark backgrounds */
+    color: #f9fafb; /* gray-50 - ensures good contrast on dark backgrounds */
+  }
 }
 

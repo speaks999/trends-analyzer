@@ -29,7 +29,7 @@ export default function TrendScores({ scores, queries }: TrendScoresProps) {
   if (scores.length === 0) {
     return (
       <div className="border rounded-lg p-4">
-        <h2 className="text-xl font-bold mb-4">Trend Scores</h2>
+        <h2 className="text-xl font-bold mb-4 text-gray-900">Trend Scores</h2>
         <p className="text-gray-500">No scores available. Fetch trends data first.</p>
       </div>
     );
@@ -37,7 +37,7 @@ export default function TrendScores({ scores, queries }: TrendScoresProps) {
 
   return (
     <div className="border rounded-lg p-4">
-      <h2 className="text-xl font-bold mb-2">Trend Opportunity Scores (TOS)</h2>
+      <h2 className="text-xl font-bold mb-2 text-gray-900">Trend Opportunity Scores (TOS)</h2>
       <p className="text-sm text-gray-600 mb-4">
         Rankings based on trend momentum, acceleration, consistency, and breadth over the last 90 days. Each component contributes up to 25 points (total out of 100).
       </p>
