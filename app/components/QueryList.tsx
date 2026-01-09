@@ -42,11 +42,12 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
   const [generatingArticle, setGeneratingArticle] = useState<Map<string, ArticlePlatform>>(new Map());
   const [articles, setArticles] = useState<Map<string, GeneratedArticle>>(new Map());
   const fetchedQueriesRef = useRef<Set<string>>(new Set()); // Track which queries we've attempted to fetch (using ref to avoid dependency issues)
+  const previousQueryIdsRef = useRef<Set<string>>(new Set()); // Track previous query IDs to detect new ones
 
   // Fetch data for a single query
   const fetchQueryData = useCallback(async (query: Query) => {
     // Mark as fetched immediately to prevent duplicate calls
-    setFetchedQueries(prev => new Set(prev).add(query.id));
+    fetchedQueriesRef.current.add(query.id);
     setLoadingQueries(prev => new Set(prev).add(query.id));
     
     try {
@@ -65,16 +66,28 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
 
       if (topicsResponse?.ok) {
         const topicsData = await topicsResponse.json();
-        if (topicsData.success && topicsData.topics) {
+        console.log(`[QueryList] Topics response for ${query.id}:`, JSON.stringify(topicsData, null, 2));
+        if (topicsData.success && Array.isArray(topicsData.topics)) {
           topics = topicsData.topics;
+          console.log(`[QueryList] Loaded ${topics.length} topics for ${query.id}`);
+        } else {
+          console.warn(`[QueryList] Topics response format issue:`, topicsData);
         }
+      } else {
+        console.warn(`[QueryList] Topics response not OK for ${query.id}:`, topicsResponse?.status, await topicsResponse?.text());
       }
 
       if (questionsResponse?.ok) {
         const questionsData = await questionsResponse.json();
-        if (questionsData.success && questionsData.questions) {
+        console.log(`[QueryList] Questions response for ${query.id}:`, JSON.stringify(questionsData, null, 2));
+        if (questionsData.success && Array.isArray(questionsData.questions)) {
           questions = questionsData.questions;
+          console.log(`[QueryList] Loaded ${questions.length} questions for ${query.id}`);
+        } else {
+          console.warn(`[QueryList] Questions response format issue:`, questionsData);
         }
+      } else {
+        console.warn(`[QueryList] Questions response not OK for ${query.id}:`, questionsResponse?.status, await questionsResponse?.text());
       }
 
       // If no data exists, fetch it from SERPAPI via the enrich endpoint
@@ -103,16 +116,24 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
 
             if (newTopicsResponse?.ok) {
               const topicsData = await newTopicsResponse.json();
+              console.log(`[QueryList] After enrich - Topics response for ${query.id}:`, topicsData);
               if (topicsData.success && topicsData.topics) {
                 topics = topicsData.topics;
+                console.log(`[QueryList] After enrich - Loaded ${topics.length} topics for ${query.id}`);
               }
+            } else {
+              console.warn(`[QueryList] After enrich - Topics response not OK for ${query.id}:`, newTopicsResponse?.status);
             }
 
             if (newQuestionsResponse?.ok) {
               const questionsData = await newQuestionsResponse.json();
+              console.log(`[QueryList] After enrich - Questions response for ${query.id}:`, questionsData);
               if (questionsData.success && questionsData.questions) {
                 questions = questionsData.questions;
+                console.log(`[QueryList] After enrich - Loaded ${questions.length} questions for ${query.id}`);
               }
+            } else {
+              console.warn(`[QueryList] After enrich - Questions response not OK for ${query.id}:`, newQuestionsResponse?.status);
             }
           }
         } catch (error) {
@@ -121,11 +142,22 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
       }
 
       // Update state
+      console.log(`[QueryList] Updating state for ${query.id}: ${topics.length} topics, ${questions.length} questions`);
       if (topics.length > 0) {
-        setRelatedTopics(prev => new Map(prev).set(query.id, topics));
+        setRelatedTopics(prev => {
+          const newMap = new Map(prev);
+          newMap.set(query.id, topics);
+          console.log(`[QueryList] Set ${topics.length} topics in state for ${query.id}`);
+          return newMap;
+        });
       }
       if (questions.length > 0) {
-        setRelatedQuestions(prev => new Map(prev).set(query.id, questions));
+        setRelatedQuestions(prev => {
+          const newMap = new Map(prev);
+          newMap.set(query.id, questions);
+          console.log(`[QueryList] Set ${questions.length} questions in state for ${query.id}`);
+          return newMap;
+        });
       }
     } catch (error) {
       console.warn(`Error loading data for query ${query.id}:`, error);
@@ -140,19 +172,32 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
 
   // Load data for all queries on mount and when queries change
   useEffect(() => {
-    if (queries.length === 0) return;
+    if (queries.length === 0) {
+      previousQueryIdsRef.current.clear();
+      return;
+    }
 
-    queries.forEach(query => {
+    // Get current query IDs
+    const currentQueryIds = new Set(queries.map(q => q.id));
+    
+    // Find new queries that weren't in the previous set
+    const newQueries = queries.filter(query => !previousQueryIdsRef.current.has(query.id));
+    
+    // Update the previous query IDs
+    previousQueryIdsRef.current = currentQueryIds;
+
+    // Automatically fetch data for new queries immediately
+    newQueries.forEach(query => {
       // Only fetch if we haven't already attempted to fetch this query
-      // and we don't already have data for it
-      if (!fetchedQueriesRef.current.has(query.id) && 
-          !relatedTopics.has(query.id) && 
-          !relatedQuestions.has(query.id) && 
-          !loadingQueries.has(query.id)) {
+      if (!fetchedQueriesRef.current.has(query.id)) {
+        // Set loading state immediately to prevent button from showing
+        setLoadingQueries(prev => new Set(prev).add(query.id));
+        // Fetch the data
         fetchQueryData(query);
       }
     });
-  }, [queries, fetchQueryData, relatedTopics, relatedQuestions, loadingQueries]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries, fetchQueryData]);
 
   const toggleExpand = (queryId: string) => {
     setExpandedQueries(prev => {
@@ -179,11 +224,7 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
       return newMap;
     });
     // Clear the fetched flag so it can be fetched again
-    setFetchedQueries(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(query.id);
-      return newSet;
-    });
+    fetchedQueriesRef.current.delete(query.id);
     
     // Force re-fetch from SERPAPI
     setLoadingQueries(prev => new Set(prev).add(query.id));
@@ -299,6 +340,11 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
             const hasData = topics.length > 0 || questions.length > 0;
             const generatingPlatform = generatingArticle.get(query.id);
             const article = articles.get(query.id);
+            
+            // Debug logging
+            if (topics.length > 0 || questions.length > 0) {
+              console.log(`[QueryList] Rendering query ${query.id}: ${topics.length} topics, ${questions.length} questions, isLoading=${isLoading}`);
+            }
 
             return (
               <div

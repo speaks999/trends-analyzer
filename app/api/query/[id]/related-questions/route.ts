@@ -11,7 +11,9 @@ export async function GET(
     const storage = await getAuthenticatedStorage(request);
     const queryId = params.id;
 
+    console.log(`[API] GET /api/query/${queryId}/related-questions`);
     const questions = await storage.getRelatedQuestions(queryId);
+    console.log(`[API] Returned ${questions.length} questions for query ${queryId}`);
 
     return NextResponse.json({
       success: true,

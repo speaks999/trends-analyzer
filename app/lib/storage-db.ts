@@ -9,13 +9,65 @@ import type { Query, TrendSnapshot, TrendScore, OpportunityCluster, IntentClassi
 // Type assertion helper to work around Database type issues until types are regenerated
 const defaultTypedSupabase = clientSupabase as any;
 
+// Configuration for direct PostgREST calls (used as fallback when Supabase client fails)
+interface DirectPostgRESTConfig {
+  supabaseUrl: string;
+  apiKey: string;
+  accessToken: string;
+}
+
 export class DatabaseStorage {
   private supabase: any;
+  // Optional direct PostgREST config for server-side fallback
+  private directConfig?: DirectPostgRESTConfig;
 
-  constructor(supabaseClient?: SupabaseClient<any>) {
+  constructor(supabaseClient?: SupabaseClient<any>, directConfig?: DirectPostgRESTConfig) {
     // If a Supabase client is provided (for server-side), use it
     // Otherwise use the default client-side one
     this.supabase = supabaseClient ? (supabaseClient as any) : defaultTypedSupabase;
+    this.directConfig = directConfig;
+  }
+
+  // Direct PostgREST query (bypasses Supabase client for more reliable RLS)
+  private async directPostgRESTQuery<T>(table: string, params: Record<string, string>): Promise<T[]> {
+    if (!this.directConfig) {
+      console.log('[Storage] No directConfig, using Supabase client');
+      return [];
+    }
+
+    const { supabaseUrl, apiKey, accessToken } = this.directConfig;
+    const queryString = new URLSearchParams(params).toString();
+    const url = `${supabaseUrl}/rest/v1/${table}?${queryString}`;
+
+    console.log(`[Storage Direct] Querying ${table} with JWT`);
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'apikey': apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'X-Request-Id': `${Date.now()}-${Math.random().toString(36).substring(7)}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[Storage Direct] Error ${response.status}: ${errorText}`);
+        return [];
+      }
+
+      const data = await response.json();
+      console.log(`[Storage Direct] ${table} returned ${data?.length || 0} rows`);
+      return data || [];
+    } catch (error) {
+      console.error(`[Storage Direct] Exception querying ${table}:`, error);
+      return [];
+    }
   }
 
   // Get current user ID (works for both client-side and server-side)
@@ -992,26 +1044,81 @@ export class DatabaseStorage {
   }
 
   async getRelatedTopics(queryId: string): Promise<RelatedTopic[]> {
-    const { data, error } = await this.supabase
-      .from('related_topics')
-      .select('*')
-      .eq('query_id', queryId)
-      .order('value', { ascending: false });
+    try {
+      // Get current user ID for debugging
+      const userId = await this.getCurrentUserId().catch(() => null);
+      console.log(`[Storage] getRelatedTopics for query ${queryId}, user: ${userId}`);
+      
+      // First, verify we can see the query itself
+      const { data: queryData, error: queryError } = await this.supabase
+        .from('queries')
+        .select('id, text, user_id')
+        .eq('id', queryId)
+        .single();
+      
+      console.log(`[Storage] Query check for ${queryId}:`, queryData ? `Found query "${queryData.text}" with user_id ${queryData.user_id}` : 'NOT FOUND', queryError ? `Error: ${queryError.message}` : '');
+      
+      // Query related_topics - RLS should filter based on the query's user_id
+      // The RLS policy checks: EXISTS (SELECT 1 FROM queries WHERE queries.id = related_topics.query_id AND queries.user_id = auth.uid())
+      const { data, error } = await this.supabase
+        .from('related_topics')
+        .select('*')
+        .eq('query_id', queryId)
+        .order('value', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching related topics:', error);
+      if (error) {
+        console.error(`[Storage] Error fetching related topics for ${queryId}:`, error);
+        console.error(`[Storage] Error details:`, JSON.stringify(error, null, 2));
+        return [];
+      }
+
+      console.log(`[Storage] getRelatedTopics returned ${data?.length || 0} topics for query ${queryId}`);
+      
+      // If Supabase client returned empty results but we have directConfig, try direct query
+      if ((!data || data.length === 0) && this.directConfig) {
+        console.log(`[Storage] Supabase client returned 0 topics, trying direct PostgREST query...`);
+        const directData = await this.directPostgRESTQuery<any>('related_topics', {
+          'query_id': `eq.${queryId}`,
+          'order': 'value.desc',
+          'select': '*',
+        });
+        
+        if (directData && directData.length > 0) {
+          console.log(`[Storage Direct] Success! Got ${directData.length} topics via direct query`);
+          return directData.map((row: any) => ({
+            id: row.id,
+            query_id: row.query_id,
+            topic: row.topic,
+            value: parseFloat(row.value),
+            is_rising: row.is_rising,
+            link: row.link || undefined,
+            created_at: row.created_at ? new Date(row.created_at) : undefined,
+          }));
+        }
+        
+        console.log(`[Storage Direct] Direct query also returned 0 topics`);
+      }
+      
+      if (data && data.length > 0) {
+        console.log(`[Storage] Sample topic:`, { id: data[0].id, topic: data[0].topic, query_id: data[0].query_id });
+      } else {
+        // Log detailed info when no data is returned
+        console.log(`[Storage] No topics returned - RLS may be blocking. Query user_id: ${queryData?.user_id}, Current user: ${userId}`);
+      }
+      
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        query_id: row.query_id,
+        topic: row.topic,
+        value: parseFloat(row.value),
+        is_rising: row.is_rising,
+        link: row.link || undefined,
+        created_at: row.created_at ? new Date(row.created_at) : undefined,
+      }));
+    } catch (err) {
+      console.error(`[Storage] Exception in getRelatedTopics for ${queryId}:`, err);
       return [];
     }
-
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      query_id: row.query_id,
-      topic: row.topic,
-      value: parseFloat(row.value),
-      is_rising: row.is_rising,
-      link: row.link || undefined,
-      created_at: row.created_at ? new Date(row.created_at) : undefined,
-    }));
   }
 
   // Related Questions management (formerly People Also Ask)
@@ -1069,28 +1176,85 @@ export class DatabaseStorage {
   }
 
   async getRelatedQuestions(queryId: string): Promise<RelatedQuestion[]> {
-    const { data, error } = await this.supabase
-      .from('related_questions')
-      .select('*')
-      .eq('query_id', queryId)
-      .order('created_at', { ascending: false });
+    try {
+      // Get current user ID for debugging
+      const userId = await this.getCurrentUserId().catch(() => null);
+      console.log(`[Storage] getRelatedQuestions for query ${queryId}, user: ${userId}`);
+      
+      // First, verify we can see the query itself
+      const { data: queryData, error: queryError } = await this.supabase
+        .from('queries')
+        .select('id, text, user_id')
+        .eq('id', queryId)
+        .single();
+      
+      console.log(`[Storage] Query check for ${queryId}:`, queryData ? `Found query "${queryData.text}" with user_id ${queryData.user_id}` : 'NOT FOUND', queryError ? `Error: ${queryError.message}` : '');
+      
+      // Query related_questions - RLS should filter based on the query's user_id
+      // The RLS policy checks: EXISTS (SELECT 1 FROM queries WHERE queries.id = related_questions.query_id AND queries.user_id = auth.uid())
+      const { data, error } = await this.supabase
+        .from('related_questions')
+        .select('*')
+        .eq('query_id', queryId)
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching Related Questions:', error);
+      if (error) {
+        console.error(`[Storage] Error fetching related questions for ${queryId}:`, error);
+        console.error(`[Storage] Error details:`, JSON.stringify(error, null, 2));
+        return [];
+      }
+
+      console.log(`[Storage] getRelatedQuestions returned ${data?.length || 0} questions for query ${queryId}`);
+      
+      // If Supabase client returned empty results but we have directConfig, try direct query
+      if ((!data || data.length === 0) && this.directConfig) {
+        console.log(`[Storage] Supabase client returned 0 questions, trying direct PostgREST query...`);
+        const directData = await this.directPostgRESTQuery<any>('related_questions', {
+          'query_id': `eq.${queryId}`,
+          'order': 'created_at.desc',
+          'select': '*',
+        });
+        
+        if (directData && directData.length > 0) {
+          console.log(`[Storage Direct] Success! Got ${directData.length} questions via direct query`);
+          return directData.map((row: any) => ({
+            id: row.id,
+            query_id: row.query_id,
+            question: row.question,
+            answer: row.answer || undefined,
+            snippet: row.snippet || undefined,
+            title: row.title || undefined,
+            link: row.link || undefined,
+            source_logo: row.source_logo || undefined,
+            created_at: row.created_at ? new Date(row.created_at) : undefined,
+          }));
+        }
+        
+        console.log(`[Storage Direct] Direct query also returned 0 questions`);
+      }
+      
+      if (data && data.length > 0) {
+        console.log(`[Storage] Sample question:`, { id: data[0].id, question: data[0].question, query_id: data[0].query_id });
+      } else {
+        // Log detailed info when no data is returned
+        console.log(`[Storage] No questions returned - RLS may be blocking. Query user_id: ${queryData?.user_id}, Current user: ${userId}`);
+      }
+      
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        query_id: row.query_id,
+        question: row.question,
+        answer: row.answer || undefined,
+        snippet: row.snippet || undefined,
+        title: row.title || undefined,
+        link: row.link || undefined,
+        source_logo: row.source_logo || undefined,
+        created_at: row.created_at ? new Date(row.created_at) : undefined,
+      }));
+    } catch (err) {
+      console.error(`[Storage] Exception in getRelatedQuestions for ${queryId}:`, err);
       return [];
     }
-
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      query_id: row.query_id,
-      question: row.question,
-      answer: row.answer || undefined,
-      snippet: row.snippet || undefined,
-      title: row.title || undefined,
-      link: row.link || undefined,
-      source_logo: row.source_logo || undefined,
-      created_at: row.created_at ? new Date(row.created_at) : undefined,
-    }));
   }
 
   // Backward compatibility aliases (deprecated)

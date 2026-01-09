@@ -8,10 +8,13 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    console.log(`[API] GET /api/query/${params.id}/related-topics`);
+    
     const storage = await getAuthenticatedStorage(request);
     const queryId = params.id;
 
     const topics = await storage.getRelatedTopics(queryId);
+    console.log(`[API] Returned ${topics.length} topics for query ${queryId}`);
 
     return NextResponse.json({
       success: true,
