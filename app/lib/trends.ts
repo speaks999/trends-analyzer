@@ -274,7 +274,8 @@ export async function getInterestByRegion(
 }
 
 /**
- * Fetch related topics using SerpApi
+ * Fetch related searches using SerpApi Google Search API
+ * Uses the Related Searches endpoint: https://serpapi.com/related-searches
  */
 export async function getRelatedTopics(
   keyword: string
@@ -285,12 +286,11 @@ export async function getRelatedTopics(
   }
 
   try {
+    // Use Google Search API (not Google Trends) to get Related Searches
     const params = new URLSearchParams({
-      engine: 'google_trends',
+      engine: 'google',
       q: keyword,
       api_key: apiKey,
-      date: 'today 12-m',
-      data_type: 'RELATED_TOPICS',
     });
 
     const url = `https://serpapi.com/search.json?${params.toString()}`;
@@ -315,80 +315,30 @@ export async function getRelatedTopics(
       throw new Error(`SerpApi error: ${data.error}`);
     }
 
-    // Check if related_topics exists - if not, return empty array (no results available)
-    if (!data.related_topics) {
+    // Check if related_searches exists - if not, return empty array (no results available)
+    if (!data.related_searches || !Array.isArray(data.related_searches)) {
       return [];
     }
 
-    // SerpApi returns related_topics with rising and top arrays
-    const risingTopics = data.related_topics?.rising || [];
-    const topTopics = data.related_topics?.top || [];
+    // Map Related Searches to RelatedTopic format
+    // Related Searches API returns: { query, link, serpapi_link, block_position, items? }
+    const related: RelatedTopic[] = data.related_searches
+      .filter((item: any) => item.query && typeof item.query === 'string')
+      .map((item: any) => ({
+        topic: item.query,
+        value: 50, // Default value since Related Searches doesn't provide trend values
+        isRising: false, // Related Searches doesn't indicate rising status
+        link: item.link || item.serpapi_link || undefined,
+      }));
 
-    // Helper to parse value - SERPAPI may return "Breakout" or other strings
-    const parseTopicValue = (rawValue: any): number => {
-      if (typeof rawValue === 'number') {
-        return rawValue;
-      }
-      if (typeof rawValue === 'string') {
-        // Handle "Breakout" or other special strings
-        if (rawValue.toLowerCase() === 'breakout' || rawValue.toLowerCase() === '+5000%') {
-          return 100; // High value for breakout topics
-        }
-        // Try to parse as number
-        const parsed = parseFloat(rawValue);
-        if (!isNaN(parsed)) {
-          return parsed;
-        }
-      }
-      // Try extracted_value as fallback
-      return 0;
-    };
-
-    // Helper to extract topic title - SERPAPI returns nested objects
-    const extractTopicTitle = (item: any): string => {
-      // Check for nested topic.title (most common SERPAPI format)
-      if (item.topic && typeof item.topic === 'object' && item.topic.title) {
-        return item.topic.title;
-      }
-      // Check for direct topic string
-      if (item.topic && typeof item.topic === 'string') {
-        return item.topic;
-      }
-      // Fallback to title
-      if (item.title && typeof item.title === 'string') {
-        return item.title;
-      }
-      // Fallback to query
-      if (item.query && typeof item.query === 'string') {
-        return item.query;
-      }
-      return '';
-    };
-
-    const related: RelatedTopic[] = [
-      ...risingTopics.map((item: any) => ({
-        topic: extractTopicTitle(item),
-        value: parseTopicValue(item.value || item.extracted_value),
-        isRising: true,
-        link: item.link || (item.topic && item.topic.serpapi_link) || undefined,
-      })),
-      ...topTopics.map((item: any) => ({
-        topic: extractTopicTitle(item),
-        value: parseTopicValue(item.value || item.extracted_value),
-        isRising: false,
-        link: item.link || (item.topic && item.topic.serpapi_link) || undefined,
-      })),
-    ];
-
-    // Filter out empty topics
-    return related.filter(t => t.topic);
+    return related;
   } catch (error) {
     // Only log as error if it's not a "no results" case
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (!errorMessage.toLowerCase().includes('hasn\'t returned any results') &&
         !errorMessage.toLowerCase().includes('no results') &&
         !errorMessage.toLowerCase().includes('insufficient data')) {
-      console.error(`Error fetching related topics for ${keyword}:`, error);
+      console.error(`Error fetching related searches for ${keyword}:`, error);
     }
     return [];
   }
