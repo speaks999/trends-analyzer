@@ -8,6 +8,7 @@ import QueryList from '@/app/components/QueryList';
 import AISuggestions from '@/app/components/AISuggestions';
 import TrendsChart from '@/app/components/TrendsChart';
 import TrendScores from '@/app/components/TrendScores';
+import OpportunityTable from '@/app/components/OpportunityTable';
 import { TrendScoreResult } from '@/app/lib/scoring';
 import { useQueryManagement } from '@/app/lib/hooks/useQueryManagement';
 import { useAuthHeaders } from '@/app/lib/hooks/useAuthHeaders';
@@ -24,6 +25,78 @@ function HomeContent() {
   const [trendScores, setTrendScores] = useState<TrendScoreResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [trendsError, setTrendsError] = useState<string | null>(null);
+
+  // Opportunity state (Google Ads + Trends)
+  const [opportunityRows, setOpportunityRows] = useState<any[]>([]);
+  const [opportunityLoading, setOpportunityLoading] = useState(false);
+  const [opportunityError, setOpportunityError] = useState<string | null>(null);
+
+  const loadOpportunity = useCallback(async () => {
+    if (queries.length === 0) return;
+    try {
+      const resp = await fetch('/api/opportunity?window=90d&geo=US&languageCode=en&network=GOOGLE_SEARCH&limit=50', {
+        headers: getAuthHeaders(),
+      });
+      const data = await resp.json();
+      if (data.success && Array.isArray(data.top)) {
+        setOpportunityRows(data.top);
+      }
+    } catch (e) {
+      // non-blocking
+    }
+  }, [queries.length, getAuthHeaders]);
+
+  const handleRefreshOpportunity = useCallback(async () => {
+    if (queries.length === 0) return;
+    setOpportunityLoading(true);
+    setOpportunityError(null);
+    try {
+      const queryIds = queries.map((q) => q.id);
+
+      const adsResp = await fetch('/api/ads/metrics', {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          queryIds,
+          geo: 'US',
+          languageCode: 'en',
+          network: 'GOOGLE_SEARCH',
+          currencyCode: 'USD',
+        }),
+      });
+      const adsData = await adsResp.json();
+      if (!adsResp.ok || !adsData.success) {
+        throw new Error(adsData?.error || 'Failed to fetch Google Ads metrics');
+      }
+
+      const oppResp = await fetch('/api/opportunity/refresh', {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          window: '90d',
+          geo: 'US',
+          languageCode: 'en',
+          network: 'GOOGLE_SEARCH',
+          limit: 50,
+        }),
+      });
+      const oppData = await oppResp.json();
+      if (!oppResp.ok || !oppData.success) {
+        throw new Error(oppData?.error || 'Failed to refresh opportunity scores');
+      }
+      setOpportunityRows(Array.isArray(oppData.top) ? oppData.top : []);
+    } catch (e) {
+      setOpportunityError(e instanceof Error ? e.message : 'Failed to refresh opportunity');
+    } finally {
+      setOpportunityLoading(false);
+    }
+  }, [queries, getAuthHeaders]);
 
   // Auto-fetch trends when "Compare Term Trends" is clicked
   const handleViewTrends = useCallback(async () => {
@@ -62,7 +135,6 @@ function HomeContent() {
               slope: 0,
               acceleration: 0,
               consistency: 0,
-              breadth: 0,
             },
           })).sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
           setTrendScores(sortedScores);
@@ -83,6 +155,9 @@ function HomeContent() {
           console.warn('Error refreshing scores:', scoreError);
         }
 
+        // Load existing opportunity scores (if any)
+        loadOpportunity();
+
         const totalPoints = interestOverTime.reduce((sum: number, s: any) => sum + (s.data?.length || 0), 0);
         if (totalPoints === 0) {
           setTrendsError(
@@ -98,7 +173,7 @@ function HomeContent() {
     } finally {
       setLoading(false);
     }
-  }, [queries, getAuthHeaders]);
+  }, [queries, getAuthHeaders, loadOpportunity]);
 
   // Hide trends section when queries are removed
   useEffect(() => {
@@ -175,6 +250,14 @@ function HomeContent() {
                     {loading ? 'Refreshing...' : '🔄 Refresh'}
                   </button>
                   <button
+                    onClick={handleRefreshOpportunity}
+                    disabled={opportunityLoading || loading}
+                    className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                    title="Fetch Google Ads metrics and recompute opportunity scores"
+                  >
+                    {opportunityLoading ? '💰 Computing...' : '💰 Opportunity'}
+                  </button>
+                  <button
                     onClick={() => setShowTrends(false)}
                     className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                   >
@@ -225,6 +308,21 @@ function HomeContent() {
                       />
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Opportunity section */}
+              {!loading && (
+                <div className="mt-6">
+                  {opportunityError && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                      <p className="text-yellow-800">{opportunityError}</p>
+                      <p className="text-yellow-700 text-sm mt-1">
+                        If this is a Google Ads config error, set the server env vars and retry.
+                      </p>
+                    </div>
+                  )}
+                  <OpportunityTable rows={opportunityRows} />
                 </div>
               )}
 

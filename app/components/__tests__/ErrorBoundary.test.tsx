@@ -101,10 +101,9 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    // The error boundary should reset, but in a real scenario,
-    // the component tree needs to be re-mounted or the error state needs to be reset
-    // For this test, we verify the button exists and is clickable
-    expect(tryAgainButton).toBeInTheDocument();
+    // The error UI should be gone and children should render again.
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+    expect(screen.getByText('No error')).toBeInTheDocument();
   });
 
   it('shows "Refresh page" button', () => {

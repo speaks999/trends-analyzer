@@ -227,7 +227,7 @@ describe('DatabaseStorage - Related Topics', () => {
 
       await storage.savePeopleAlsoAsk(queryId, invalidPaa);
 
-      expect(mockFrom).toHaveBeenCalledWith('people_also_ask');
+      expect(mockFrom).toHaveBeenCalledWith('related_questions');
       expect(mockUpsert).toHaveBeenCalled();
       
       const upsertCall = mockUpsert.mock.calls[0];

@@ -31,6 +31,45 @@ export interface TrendScore {
   window?: '90d'; // Optional window for historical tracking
 }
 
+export interface AdsKeywordMetrics {
+  id?: string;
+  query_id: string;
+  geo: string; // e.g. 'US'
+  language_code: string; // e.g. 'en'
+  network: 'GOOGLE_SEARCH' | 'GOOGLE_SEARCH_AND_PARTNERS';
+  currency_code: string; // e.g. 'USD'
+
+  avg_monthly_searches?: number;
+  competition?: 'LOW' | 'MEDIUM' | 'HIGH';
+  competition_index?: number;
+  top_of_page_bid_low_micros?: number;
+  top_of_page_bid_high_micros?: number;
+
+  raw?: any;
+  fetched_at?: Date;
+}
+
+export interface OpportunityScore {
+  id?: string;
+  query_id: string;
+  geo: string;
+  language_code: string;
+  network: 'GOOGLE_SEARCH' | 'GOOGLE_SEARCH_AND_PARTNERS';
+  window: '90d';
+
+  opportunity_score: number; // 0-100
+  efficiency_score: number; // 0-100
+  demand_score: number; // 0-100
+  momentum_score: number; // 0-100
+  cpc_score: number; // 0-100
+
+  slope: number;
+  acceleration: number;
+  consistency: number;
+
+  calculated_at: Date;
+}
+
 export interface OpportunityCluster {
   id: string;
   name: string;

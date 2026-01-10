@@ -88,6 +88,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               <svg
                 className="w-6 h-6 text-red-600"
                 fill="none"
+                role="img"
+                focusable="false"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth="2"
