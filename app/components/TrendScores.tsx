@@ -1,6 +1,5 @@
 'use client';
 
-import { TrendScore } from '@/app/lib/storage';
 import { TrendScoreResult } from '@/app/lib/scoring';
 
 interface TrendScoresProps {
@@ -39,7 +38,7 @@ export default function TrendScores({ scores, queries }: TrendScoresProps) {
     <div className="border rounded-lg p-4">
       <h2 className="text-xl font-bold mb-2 text-gray-900">Trend Opportunity Scores (TOS)</h2>
       <p className="text-sm text-gray-600 mb-4">
-        Rankings based on trend momentum, acceleration, consistency, and breadth over the last 90 days. Each component contributes up to 25 points (total out of 100).
+        Rankings based on trend momentum over the last 90 days (slope, acceleration, and consistency). Sub-metrics contribute up to 25 points each and are rescaled to a 0–100 TOS.
       </p>
       <div className="space-y-3">
         {scores
@@ -64,7 +63,7 @@ export default function TrendScores({ scores, queries }: TrendScoresProps) {
                   {queries.get(score.query_id)}
                 </div>
               )}
-              <div className="grid grid-cols-4 gap-2 text-sm">
+              <div className="grid grid-cols-3 gap-2 text-sm">
                 <div>
                   <span className="text-gray-600">Slope:</span>
                   <span className="ml-1 font-semibold">{Math.round(score.breakdown.slope)}/25</span>
@@ -76,10 +75,6 @@ export default function TrendScores({ scores, queries }: TrendScoresProps) {
                 <div>
                   <span className="text-gray-600">Consistency:</span>
                   <span className="ml-1 font-semibold">{Math.round(score.breakdown.consistency)}/25</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Breadth:</span>
-                  <span className="ml-1 font-semibold">{Math.round(score.breakdown.breadth)}/25</span>
                 </div>
               </div>
             </div>

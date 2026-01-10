@@ -4,7 +4,19 @@
 
 import { supabase as clientSupabase } from './supabase-client';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Query, TrendSnapshot, TrendScore, OpportunityCluster, IntentClassification, EntrepreneurProfile, RelatedTopic, RelatedQuestion, PeopleAlsoAsk } from './storage';
+import type {
+  AdsKeywordMetrics,
+  EntrepreneurProfile,
+  IntentClassification,
+  OpportunityCluster,
+  OpportunityScore,
+  PeopleAlsoAsk,
+  Query,
+  RelatedQuestion,
+  RelatedTopic,
+  TrendScore,
+  TrendSnapshot,
+} from './storage';
 
 // Type assertion helper to work around Database type issues until types are regenerated
 const defaultTypedSupabase = clientSupabase as any;
@@ -447,6 +459,151 @@ export class DatabaseStorage {
     }
 
     return (data || []).map(this.mapTrendScoreFromDb);
+  }
+
+  // Google Ads keyword metrics management
+  async upsertAdsKeywordMetrics(metrics: Omit<AdsKeywordMetrics, 'id' | 'fetched_at'>): Promise<void> {
+    const { error } = await this.supabase
+      .from('ads_keyword_metrics')
+      .upsert(
+        {
+          query_id: metrics.query_id,
+          geo: metrics.geo,
+          language_code: metrics.language_code,
+          network: metrics.network,
+          currency_code: metrics.currency_code,
+          avg_monthly_searches: metrics.avg_monthly_searches ?? null,
+          competition: metrics.competition ?? null,
+          competition_index: metrics.competition_index ?? null,
+          top_of_page_bid_low_micros: metrics.top_of_page_bid_low_micros ?? null,
+          top_of_page_bid_high_micros: metrics.top_of_page_bid_high_micros ?? null,
+          raw: metrics.raw ?? null,
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: 'query_id,geo,language_code,network' }
+      );
+
+    if (error) {
+      console.error('Error upserting ads keyword metrics:', error);
+      throw new Error(`Failed to upsert ads keyword metrics: ${error.message}`);
+    }
+  }
+
+  async getAdsKeywordMetrics(
+    queryId: string,
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH'
+  ): Promise<AdsKeywordMetrics | undefined> {
+    const { data, error } = await this.supabase
+      .from('ads_keyword_metrics')
+      .select('*')
+      .eq('query_id', queryId)
+      .eq('geo', geo)
+      .eq('language_code', languageCode)
+      .eq('network', network)
+      .order('fetched_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return undefined;
+    return this.mapAdsKeywordMetricsFromDb(data);
+  }
+
+  async getAdsKeywordMetricsForQueries(
+    queryIds: string[],
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH'
+  ): Promise<Map<string, AdsKeywordMetrics>> {
+    const result = new Map<string, AdsKeywordMetrics>();
+    if (!queryIds || queryIds.length === 0) return result;
+
+    const { data, error } = await this.supabase
+      .from('ads_keyword_metrics')
+      .select('*')
+      .in('query_id', queryIds)
+      .eq('geo', geo)
+      .eq('language_code', languageCode)
+      .eq('network', network)
+      .order('fetched_at', { ascending: false });
+
+    if (error || !data) return result;
+
+    // Keep the newest per query_id.
+    for (const row of data) {
+      if (!row?.query_id) continue;
+      if (!result.has(row.query_id)) {
+        result.set(row.query_id, this.mapAdsKeywordMetricsFromDb(row));
+      }
+    }
+    return result;
+  }
+
+  // Opportunity scores management
+  async upsertOpportunityScore(score: Omit<OpportunityScore, 'id'>): Promise<void> {
+    const { error } = await this.supabase
+      .from('opportunity_scores')
+      .upsert(
+        {
+          query_id: score.query_id,
+          geo: score.geo,
+          language_code: score.language_code,
+          network: score.network,
+          window: score.window,
+          opportunity_score: score.opportunity_score,
+          efficiency_score: score.efficiency_score,
+          demand_score: score.demand_score,
+          momentum_score: score.momentum_score,
+          cpc_score: score.cpc_score,
+          slope: score.slope,
+          acceleration: score.acceleration,
+          consistency: score.consistency,
+          calculated_at: score.calculated_at.toISOString(),
+        },
+        { onConflict: 'query_id,geo,language_code,network,window' }
+      );
+
+    if (error) {
+      console.error('Error upserting opportunity score:', error);
+      throw new Error(`Failed to upsert opportunity score: ${error.message}`);
+    }
+  }
+
+  async getTopOpportunityScores(
+    limit: number = 50,
+    window: '90d' = '90d',
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: OpportunityScore['network'] = 'GOOGLE_SEARCH'
+  ): Promise<OpportunityScore[]> {
+    const userId = await this.getCurrentUserId();
+
+    // First get all query IDs for this user
+    const { data: userQueries, error: queryError } = await this.supabase
+      .from('queries')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (queryError || !userQueries || userQueries.length === 0) {
+      return [];
+    }
+
+    const queryIds = (userQueries || []).map((q: any) => q.id);
+
+    const { data, error } = await this.supabase
+      .from('opportunity_scores')
+      .select('*')
+      .in('query_id', queryIds)
+      .eq('geo', geo)
+      .eq('language_code', languageCode)
+      .eq('network', network)
+      .eq('window', window)
+      .order('opportunity_score', { ascending: false })
+      .limit(limit);
+
+    if (error || !data) return [];
+    return (data || []).map(this.mapOpportunityScoreFromDb);
   }
 
   // Opportunity cluster management
@@ -967,6 +1124,56 @@ export class DatabaseStorage {
       breadth: parseFloat(row.breadth),
       calculated_at: new Date(row.calculated_at),
       window: row.window || '90d',
+    };
+  }
+
+  private mapAdsKeywordMetricsFromDb(row: any): AdsKeywordMetrics {
+    return {
+      id: row.id,
+      query_id: row.query_id,
+      geo: row.geo,
+      language_code: row.language_code,
+      network: row.network,
+      currency_code: row.currency_code,
+      avg_monthly_searches:
+        row.avg_monthly_searches !== null && row.avg_monthly_searches !== undefined
+          ? Number(row.avg_monthly_searches)
+          : undefined,
+      competition: row.competition || undefined,
+      competition_index:
+        row.competition_index !== null && row.competition_index !== undefined
+          ? Number(row.competition_index)
+          : undefined,
+      top_of_page_bid_low_micros:
+        row.top_of_page_bid_low_micros !== null && row.top_of_page_bid_low_micros !== undefined
+          ? Number(row.top_of_page_bid_low_micros)
+          : undefined,
+      top_of_page_bid_high_micros:
+        row.top_of_page_bid_high_micros !== null && row.top_of_page_bid_high_micros !== undefined
+          ? Number(row.top_of_page_bid_high_micros)
+          : undefined,
+      raw: row.raw || undefined,
+      fetched_at: row.fetched_at ? new Date(row.fetched_at) : undefined,
+    };
+  }
+
+  private mapOpportunityScoreFromDb(row: any): OpportunityScore {
+    return {
+      id: row.id,
+      query_id: row.query_id,
+      geo: row.geo,
+      language_code: row.language_code,
+      network: row.network,
+      window: row.window || '90d',
+      opportunity_score: parseFloat(row.opportunity_score),
+      efficiency_score: parseFloat(row.efficiency_score),
+      demand_score: parseFloat(row.demand_score),
+      momentum_score: parseFloat(row.momentum_score),
+      cpc_score: parseFloat(row.cpc_score),
+      slope: parseFloat(row.slope),
+      acceleration: parseFloat(row.acceleration),
+      consistency: parseFloat(row.consistency),
+      calculated_at: new Date(row.calculated_at),
     };
   }
 

@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
         slope: score.breakdown.slope,
         acceleration: score.breakdown.acceleration,
         consistency: score.breakdown.consistency,
-        breadth: score.breakdown.breadth,
+        breadth: 0,
         calculated_at: new Date(),
         window: '90d',
       });

@@ -8,7 +8,6 @@ export interface ScoreBreakdown {
   slope: number;
   acceleration: number;
   consistency: number;
-  breadth: number;
 }
 
 export interface TrendScoreResult {
@@ -100,29 +99,6 @@ function calculateConsistency(data: TrendDataPoint[]): number {
 }
 
 /**
- * Calculate breadth (number of regions with meaningful interest)
- */
-async function calculateBreadth(queryId: string, window?: '90d', storageInstance?: DatabaseStorage): Promise<number> {
-  // Get all snapshots for this query
-  const storageToUse = storageInstance || storage;
-  const snapshots = await storageToUse.getTrendSnapshots(queryId, window);
-  
-  if (snapshots.length === 0) return 0;
-
-  // Count unique regions with value > 0
-  const regions = new Set(
-    snapshots
-      .filter(s => s.region && s.interest_value > 0)
-      .map(s => s.region!)
-  );
-
-  // Normalize to 0-25 scale: assume max reasonable regions is 20
-  // Each component contributes max 25 points to the total score
-  const breadth100 = (regions.size / 20) * 100; // Calculate on 0-100 scale first
-  return Math.min(25, breadth100 / 4); // Convert to 0-25 scale
-}
-
-/**
  * Calculate Trend Opportunity Score (TOS)
  */
 export async function calculateTOS(queryId: string, window: '90d' = '90d', storageInstance?: DatabaseStorage): Promise<TrendScoreResult> {
@@ -138,7 +114,6 @@ export async function calculateTOS(queryId: string, window: '90d' = '90d', stora
           slope: 0,
           acceleration: 0,
           consistency: 0, // Default to 0 instead of 50/4 = 12.5
-          breadth: 0,
         },
         classification: 'declining',
       };
@@ -154,14 +129,11 @@ export async function calculateTOS(queryId: string, window: '90d' = '90d', stora
   const slope = calculateSlope(data);
   const acceleration = calculateAcceleration(data);
   const consistency = calculateConsistency(data);
-  const breadth = await calculateBreadth(queryId, window, storageInstance);
 
-  // Calculate TOS by summing components (each out of 25, total out of 100)
-  // TOS = Slope + Acceleration + Consistency + Breadth
-  // Each component is normalized to 0-25 scale, so sum gives 0-100 total
-  const score = Math.round(
-    slope + acceleration + consistency + breadth
-  );
+  // Breadth intentionally removed (v2): we only score momentum from the time series itself.
+  // slope/acceleration/consistency are each 0-25 => 0-75 total, rescaled to 0-100.
+  const rawTotal = slope + acceleration + consistency; // 0-75
+  const score = Math.round((rawTotal / 75) * 100);
 
   // Classify score
   let classification: 'breakout' | 'growing' | 'stable' | 'declining';
@@ -182,7 +154,6 @@ export async function calculateTOS(queryId: string, window: '90d' = '90d', stora
       slope,
       acceleration,
       consistency,
-      breadth,
     },
     classification,
   };
@@ -221,7 +192,6 @@ export async function getTopQueriesByTOS(
       slope: score.slope,
       acceleration: score.acceleration,
       consistency: score.consistency,
-      breadth: score.breadth,
     },
     classification: score.score >= 80 ? 'breakout' 
       : score.score >= 60 ? 'growing'

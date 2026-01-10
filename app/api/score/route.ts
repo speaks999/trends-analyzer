@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
         slope: score.breakdown.slope,
         acceleration: score.breakdown.acceleration,
         consistency: score.breakdown.consistency,
-        breadth: score.breakdown.breadth,
+        breadth: 0,
         calculated_at: new Date(),
         window: window,
       });
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           slope: score.breakdown.slope,
           acceleration: score.breakdown.acceleration,
           consistency: score.breakdown.consistency,
-          breadth: score.breakdown.breadth,
+          breadth: 0,
           calculated_at: new Date(),
           window: window,
         });
@@ -94,7 +94,6 @@ export async function GET(request: NextRequest) {
                 slope: storedScore.slope,
                 acceleration: storedScore.acceleration,
                 consistency: storedScore.consistency,
-                breadth: storedScore.breadth,
               },
             },
           });
@@ -121,7 +120,6 @@ export async function GET(request: NextRequest) {
         slope: score.slope,
         acceleration: score.acceleration,
         consistency: score.consistency,
-        breadth: score.breadth,
       },
     }));
 
