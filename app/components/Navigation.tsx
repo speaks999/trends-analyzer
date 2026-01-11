@@ -21,6 +21,16 @@ export default function Navigation() {
               <Link href="/" className="text-xl font-bold text-gray-900">
                 Trend Intelligence
               </Link>
+              <Link
+                href="/help"
+                className={`text-sm font-medium px-3 py-2 rounded-lg ${
+                  isActive('/help')
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Help
+              </Link>
             </div>
             <div className="flex items-center gap-3">
               <button
