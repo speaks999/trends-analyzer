@@ -280,6 +280,43 @@ export async function generateQueryArticle(
   relatedQuestions: RelatedQuestion[],
   platform: ArticlePlatform = 'blog'
 ): Promise<GeneratedArticle> {
+  // Deterministic offline stub for browser automation / CI without API keys.
+  if (process.env.E2E_TEST_MODE === 'true') {
+    const createdAt = new Date();
+    const questionsUsed = relatedQuestions.filter((q) => q.question && q.question.trim().length > 0).length;
+
+    if (platform === 'blog') {
+      const content = `## Overview\n\nThis is an E2E stub article for "${searchQuery}".\n\n## Questions considered\n\n${questionsUsed} related questions available.\n`;
+      return {
+        title: `Guide to ${searchQuery}`,
+        content,
+        platform: 'blog',
+        wordCount: content.split(/\s+/).filter(Boolean).length,
+        searchQuery,
+        createdAt,
+        questionsUsed,
+      };
+    }
+
+    const content = `E2E stub content for "${searchQuery}" on ${platform}.`;
+    return {
+      title:
+        platform === 'linkedin'
+          ? `LinkedIn: ${searchQuery}`
+          : platform === 'instagram'
+            ? `Instagram: ${searchQuery}`
+            : `X/Twitter: ${searchQuery}`,
+      content,
+      platform,
+      characterCount: content.length,
+      hashtags: [],
+      thread: platform === 'twitter' ? [`Follow-up for "${searchQuery}"`] : undefined,
+      searchQuery,
+      createdAt,
+      questionsUsed,
+    };
+  }
+
   switch (platform) {
     case 'blog':
       return generateBlogArticle(searchQuery, relatedQuestions);
