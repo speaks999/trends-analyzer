@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import AuthGuard from '@/app/components/AuthGuard';
 import Navigation from '@/app/components/Navigation';
 import QueryInput from '@/app/components/QueryInput';
@@ -198,6 +199,64 @@ function HomeContent() {
             </p>
           </div>
 
+          {/* Getting started */}
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border border-blue-100">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">Getting started</h2>
+                <p className="text-gray-600">
+                  Add keywords, compare trends, then pull Google Ads metrics to compute Opportunity scores.
+                  <span className="ml-2">
+                    <Link href="/help" className="text-blue-600 hover:text-blue-800 underline font-medium">
+                      Read the full guide
+                    </Link>
+                  </span>
+                </p>
+              </div>
+              <Link
+                href="/help#quick-start-in-the-ui"
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium"
+              >
+                Open Quick Start
+              </Link>
+            </div>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="font-semibold text-gray-900 mb-1">1) Add queries</div>
+                <div className="text-gray-600">
+                  Use manual entry or AI suggestions.
+                  <span className="ml-2">
+                    <Link href="/help#quick-start-in-the-ui" className="text-blue-600 hover:text-blue-800 underline">
+                      Details
+                    </Link>
+                  </span>
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="font-semibold text-gray-900 mb-1">2) Compare trends (TOS)</div>
+                <div className="text-gray-600">
+                  Fetch Google Trends time series and momentum score.
+                  <span className="ml-2">
+                    <Link href="/help#tos-trend-opportunity-score" className="text-blue-600 hover:text-blue-800 underline">
+                      What is TOS?
+                    </Link>
+                  </span>
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <div className="font-semibold text-gray-900 mb-1">3) Compute Opportunity (v2)</div>
+                <div className="text-gray-600">
+                  Pull monthly searches + CPC and compute Opportunity/Efficiency.
+                  <span className="ml-2">
+                    <Link href="/help#opportunity-v2" className="text-blue-600 hover:text-blue-800 underline">
+                      How it works
+                    </Link>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Query Management Section */}
           <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Manage Search Queries</h2>
@@ -257,6 +316,13 @@ function HomeContent() {
                   >
                     {opportunityLoading ? '💰 Computing...' : '💰 Opportunity'}
                   </button>
+                  <Link
+                    href="/help#opportunity-v2"
+                    className="px-3 py-2 text-sm text-gray-700 rounded-lg hover:bg-gray-100"
+                    title="Learn how Opportunity (v2) works"
+                  >
+                    Help
+                  </Link>
                   <button
                     onClick={() => setShowTrends(false)}
                     className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
