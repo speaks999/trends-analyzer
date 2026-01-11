@@ -5,14 +5,40 @@ import remarkGfm from 'remark-gfm';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+function slugify(text: string) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function extractText(node: any): string {
+  if (node === null || node === undefined) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (typeof node === 'object' && node.props?.children) return extractText(node.props.children);
+  return '';
+}
+
 function Markdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        h1: (props) => <h1 className="text-3xl font-bold text-gray-900 mb-4" {...props} />,
-        h2: (props) => <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-3" {...props} />,
-        h3: (props) => <h3 className="text-xl font-semibold text-gray-900 mt-6 mb-2" {...props} />,
+        h1: (props) => {
+          const id = slugify(extractText(props.children));
+          return <h1 id={id} className="text-3xl font-bold text-gray-900 mb-4 scroll-mt-24" {...props} />;
+        },
+        h2: (props) => {
+          const id = slugify(extractText(props.children));
+          return <h2 id={id} className="text-2xl font-bold text-gray-900 mt-8 mb-3 scroll-mt-24" {...props} />;
+        },
+        h3: (props) => {
+          const id = slugify(extractText(props.children));
+          return <h3 id={id} className="text-xl font-semibold text-gray-900 mt-6 mb-2 scroll-mt-24" {...props} />;
+        },
         p: (props) => <p className="text-gray-700 leading-7 mb-3" {...props} />,
         ul: (props) => <ul className="list-disc pl-6 text-gray-700 mb-3 space-y-1" {...props} />,
         ol: (props) => <ol className="list-decimal pl-6 text-gray-700 mb-3 space-y-1" {...props} />,
