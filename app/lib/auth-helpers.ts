@@ -3,6 +3,7 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { DatabaseStorage } from './storage-db';
+import { memoryStorage } from './storage';
 
 /**
  * Get authenticated Supabase client for server-side API routes
@@ -216,6 +217,11 @@ export async function getUserIdFromRequest(request: NextRequest): Promise<string
  * Use this in API routes to access storage with the user's authentication context
  */
 export async function getAuthenticatedStorage(request: NextRequest): Promise<DatabaseStorage> {
+  // E2E test mode: bypass Supabase and use in-memory storage.
+  if (process.env.E2E_TEST_MODE === 'true') {
+    return memoryStorage as unknown as DatabaseStorage;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
   

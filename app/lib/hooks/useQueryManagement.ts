@@ -51,6 +51,11 @@ export function useQueryManagement() {
         console.error('Error classifying intent:', error);
       }
 
+      // E2E test mode: skip network enrichment (runs without external services).
+      if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true') {
+        return;
+      }
+
       // Automatically fetch and store related topics and PAA data
       try {
         const headers: HeadersInit = {

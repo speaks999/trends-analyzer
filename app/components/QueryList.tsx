@@ -46,6 +46,17 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
 
   // Fetch data for a single query
   const fetchQueryData = useCallback(async (query: Query) => {
+    // E2E test mode: avoid hitting API routes (runs without Supabase/SERP keys).
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true') {
+      fetchedQueriesRef.current.add(query.id);
+      setLoadingQueries(prev => {
+        const next = new Set(prev);
+        next.delete(query.id);
+        return next;
+      });
+      return;
+    }
+
     // Mark as fetched immediately to prevent duplicate calls
     fetchedQueriesRef.current.add(query.id);
     setLoadingQueries(prev => new Set(prev).add(query.id));
@@ -212,6 +223,22 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
   };
 
   const handleRefresh = async (query: Query) => {
+    // E2E test mode: skip refresh network calls.
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true') {
+      fetchedQueriesRef.current.delete(query.id);
+      setRelatedTopics(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(query.id);
+        return newMap;
+      });
+      setRelatedQuestions(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(query.id);
+        return newMap;
+      });
+      return;
+    }
+
     // Clear existing data and re-fetch
     setRelatedTopics(prev => {
       const newMap = new Map(prev);
@@ -286,6 +313,40 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
   };
 
   const handleCreateArticle = async (query: Query, platform: ArticlePlatform) => {
+    // E2E test mode: generate deterministic local content (no API/OpenAI).
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true') {
+      const createdAt = new Date();
+      const titlePrefix =
+        platform === 'blog'
+          ? 'Guide to'
+          : platform === 'linkedin'
+            ? 'LinkedIn:'
+            : platform === 'instagram'
+              ? 'Instagram:'
+              : 'X/Twitter:';
+
+      const content =
+        platform === 'blog'
+          ? `## Overview\n\nThis is an E2E test article for "${query.text}".\n\n## Key takeaways\n\n- Deterministic content\n- No external dependencies\n`
+          : `E2E test content for "${query.text}" on ${platform}.`;
+
+      const article: GeneratedArticle = {
+        title: `${titlePrefix} ${query.text}`.trim(),
+        content,
+        platform,
+        wordCount: platform === 'blog' ? content.split(/\s+/).filter(Boolean).length : undefined,
+        characterCount: platform !== 'blog' ? content.length : undefined,
+        hashtags: [],
+        thread: platform === 'twitter' ? [`Follow-up for "${query.text}"`] : undefined,
+        searchQuery: query.text,
+        createdAt,
+        questionsUsed: 0,
+      };
+
+      setArticles(prev => new Map(prev).set(query.id, article));
+      return;
+    }
+
     setGeneratingArticle(prev => new Map(prev).set(query.id, platform));
     
     try {

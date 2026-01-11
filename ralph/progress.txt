@@ -95,3 +95,19 @@ This file tracks progress through the PRD tasks. Each iteration should append it
   * Linting: ✅ PASSED (no errors)
   * Code review: ✅ All functionality implemented with proper error handling and loading states
 - Next: Task complete. Each cluster now has a button to generate personalized tutorial recommendations using OpenAI.
+
+[2026-01-11 20:30:00] Iteration #5
+- Task: agent-browser-e2e - Add browser automation tests (add terms, create articles, verify results)
+- Status: COMPLETE
+- Changes:
+  * Added agent-browser + start-server-and-test dev dependencies and scripts (test:e2e, test:e2e:install)
+  * Implemented E2E test mode (NEXT_PUBLIC_E2E_TEST_MODE) to bypass Supabase auth and external network calls
+  * Added deterministic, local article generation in QueryList for E2E mode (no OpenAI required)
+  * Added Jest E2E config (jest.e2e.config.js) and agent-browser-driven test (e2e/agent-browser.e2e.test.ts)
+  * Excluded e2e/ from default unit test runs
+- Feedback:
+  * Type checking: ✅ PASSED (npm run type-check)
+  * Linting: ✅ PASSED (npm run lint)
+  * Unit tests: ✅ PASSED (npm test)
+  * E2E tests: ✅ PASSED (npm run test:e2e)
+- Next: Add more e2e flows as needed (trends/opportunity can be covered once test stubs are defined for those APIs).

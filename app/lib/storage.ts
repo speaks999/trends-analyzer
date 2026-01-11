@@ -128,16 +128,55 @@ export interface EntrepreneurProfile {
   updated_at?: Date;
 }
 
-class Storage {
+/**
+ * In-memory storage adapter used for local development and E2E tests.
+ *
+ * This intentionally mirrors the async API of the database-backed storage, so
+ * the UI and API routes can run without Supabase credentials.
+ */
+class MemoryStorage {
   private queries: Map<string, Query> = new Map();
-  private trendSnapshots: TrendSnapshot[] = [];
-  private trendScores: Map<string, TrendScore> = new Map();
+  private trendSnapshotsByKey: Map<string, TrendSnapshot> = new Map();
+  private trendScoresByKey: Map<string, TrendScore> = new Map();
+  private adsMetricsByKey: Map<string, AdsKeywordMetrics> = new Map();
+  private opportunityScoresByKey: Map<string, OpportunityScore> = new Map();
   private opportunityClusters: Map<string, OpportunityCluster> = new Map();
   private intentClassifications: Map<string, IntentClassification> = new Map();
+  private relatedTopicsByQueryId: Map<string, RelatedTopic[]> = new Map();
+  private relatedQuestionsByQueryId: Map<string, RelatedQuestion[]> = new Map();
+  private entrepreneurProfile: EntrepreneurProfile | null = null;
+
+  private makeTrendScoreKey(queryId: string, window: '90d'): string {
+    return `${queryId}::${window}`;
+  }
+
+  private makeTrendSnapshotKey(snapshot: TrendSnapshot): string {
+    const regionPart = snapshot.region ?? '';
+    return `${snapshot.query_id}::${snapshot.window}::${regionPart}::${snapshot.date.toISOString()}`;
+  }
+
+  private makeAdsMetricsKey(
+    queryId: string,
+    geo: string,
+    languageCode: string,
+    network: AdsKeywordMetrics['network']
+  ): string {
+    return `${queryId}::${geo}::${languageCode}::${network}`;
+  }
+
+  private makeOpportunityScoreKey(
+    queryId: string,
+    geo: string,
+    languageCode: string,
+    network: OpportunityScore['network'],
+    window: OpportunityScore['window']
+  ): string {
+    return `${queryId}::${geo}::${languageCode}::${network}::${window}`;
+  }
 
   // Query management
-  addQuery(query: Omit<Query, 'id' | 'created_at'>): Query {
-    const id = `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  async addQuery(query: Omit<Query, 'id' | 'created_at'>): Promise<Query> {
+    const id = `query_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const newQuery: Query = {
       ...query,
       id,
@@ -147,119 +186,372 @@ class Storage {
     return newQuery;
   }
 
-  getQuery(id: string): Query | undefined {
+  async getQuery(id: string): Promise<Query | undefined> {
     return this.queries.get(id);
   }
 
-  getAllQueries(): Query[] {
-    return Array.from(this.queries.values());
+  async getAllQueries(): Promise<Query[]> {
+    return Array.from(this.queries.values()).sort(
+      (a, b) => b.created_at.getTime() - a.created_at.getTime()
+    );
   }
 
-  removeQuery(id: string): boolean {
-    // Remove query and all associated data
+  async removeQuery(id: string): Promise<boolean> {
     const deleted = this.queries.delete(id);
-    if (deleted) {
-      this.trendSnapshots = this.trendSnapshots.filter(s => s.query_id !== id);
-      this.trendScores.delete(id);
-      this.intentClassifications.delete(id);
-      // Remove from clusters
-      this.opportunityClusters.forEach(cluster => {
-        cluster.queries = cluster.queries.filter(qid => qid !== id);
-      });
+    if (!deleted) return false;
+
+    // Cascade cleanup of associated data
+    this.relatedTopicsByQueryId.delete(id);
+    this.relatedQuestionsByQueryId.delete(id);
+    this.intentClassifications.delete(id);
+
+    // Trend data cleanup
+    for (const key of this.trendSnapshotsByKey.keys()) {
+      if (key.startsWith(`${id}::`)) this.trendSnapshotsByKey.delete(key);
     }
-    return deleted;
+    for (const key of this.trendScoresByKey.keys()) {
+      if (key.startsWith(`${id}::`)) this.trendScoresByKey.delete(key);
+    }
+
+    // Ads/opportunity cleanup
+    for (const key of this.adsMetricsByKey.keys()) {
+      if (key.startsWith(`${id}::`)) this.adsMetricsByKey.delete(key);
+    }
+    for (const key of this.opportunityScoresByKey.keys()) {
+      if (key.startsWith(`${id}::`)) this.opportunityScoresByKey.delete(key);
+    }
+
+    // Remove from clusters
+    for (const [clusterId, cluster] of this.opportunityClusters.entries()) {
+      const nextQueries = cluster.queries.filter((qid) => qid !== id);
+      if (nextQueries.length !== cluster.queries.length) {
+        this.opportunityClusters.set(clusterId, { ...cluster, queries: nextQueries });
+      }
+    }
+
+    return true;
   }
 
   // Trend snapshot management
-  addTrendSnapshot(snapshot: TrendSnapshot): void {
-    this.trendSnapshots.push(snapshot);
+  async addTrendSnapshot(snapshot: TrendSnapshot): Promise<void> {
+    this.trendSnapshotsByKey.set(this.makeTrendSnapshotKey(snapshot), snapshot);
   }
 
-  getTrendSnapshots(queryId: string, window?: '90d'): TrendSnapshot[] {
-    let snapshots = this.trendSnapshots.filter(s => s.query_id === queryId);
-    if (window) {
-      snapshots = snapshots.filter(s => s.window === window);
+  async getTrendSnapshots(queryId: string, window?: '90d', region?: string): Promise<TrendSnapshot[]> {
+    const out: TrendSnapshot[] = [];
+    for (const snap of this.trendSnapshotsByKey.values()) {
+      if (snap.query_id !== queryId) continue;
+      if (window && snap.window !== window) continue;
+      if (region && (snap.region ?? null) !== region) continue;
+      out.push(snap);
     }
-    return snapshots.sort((a, b) => a.date.getTime() - b.date.getTime());
+    out.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return out;
   }
 
-  getLatestSnapshot(queryId: string, window: '90d'): TrendSnapshot | undefined {
-    const snapshots = this.getTrendSnapshots(queryId, window);
-    return snapshots[snapshots.length - 1];
+  async getLatestSnapshot(queryId: string, window: '90d'): Promise<TrendSnapshot | undefined> {
+    const snaps = await this.getTrendSnapshots(queryId, window);
+    return snaps[snaps.length - 1];
+  }
+
+  async hasCachedTrendData(queryId: string, window: '90d', region: string): Promise<boolean> {
+    const snaps = await this.getTrendSnapshots(queryId, window, region);
+    return snaps.length >= 75;
+  }
+
+  async batchHasCachedTrendData(
+    queryIdMap: Map<string, string>,
+    window: '90d',
+    region: string
+  ): Promise<Map<string, boolean>> {
+    const results = new Map<string, boolean>();
+    for (const [queryText, queryId] of queryIdMap.entries()) {
+      results.set(queryText, await this.hasCachedTrendData(queryId, window, region));
+    }
+    return results;
+  }
+
+  async getCachedTrendData(
+    queryText: string,
+    queryId: string,
+    window: '90d',
+    region: string
+  ): Promise<{ query: string; data: Array<{ date: Date; value: number }>; window: '90d'; geo?: string } | null> {
+    const snaps = await this.getTrendSnapshots(queryId, window, region);
+    if (snaps.length === 0) return null;
+    return {
+      query: queryText,
+      data: snaps.map((s) => ({ date: s.date, value: s.interest_value })),
+      window,
+      geo: region,
+    };
   }
 
   // Trend score management
-  setTrendScore(score: TrendScore): void {
-    this.trendScores.set(score.query_id, score);
+  async setTrendScore(score: TrendScore & { window?: '90d' }): Promise<void> {
+    const window = score.window ?? '90d';
+    this.trendScoresByKey.set(this.makeTrendScoreKey(score.query_id, window), { ...score, window });
   }
 
-  getTrendScore(queryId: string): TrendScore | undefined {
-    return this.trendScores.get(queryId);
+  async getTrendScore(queryId: string, window: '90d' = '90d'): Promise<TrendScore | undefined> {
+    return this.trendScoresByKey.get(this.makeTrendScoreKey(queryId, window));
   }
 
-  getAllTrendScores(): TrendScore[] {
-    return Array.from(this.trendScores.values());
+  async getAllTrendScores(window: '90d' = '90d'): Promise<TrendScore[]> {
+    const out: TrendScore[] = [];
+    for (const score of this.trendScoresByKey.values()) {
+      if ((score.window ?? '90d') === window) out.push(score);
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out;
+  }
+
+  async getTopRankedQueries(
+    limit: number = 10,
+    window: '90d' = '90d',
+    minScore: number = 0
+  ): Promise<TrendScore[]> {
+    const all = await this.getAllTrendScores(window);
+    return all.filter((s) => s.score >= minScore).slice(0, limit);
+  }
+
+  // Google Ads keyword metrics management
+  async upsertAdsKeywordMetrics(metrics: Omit<AdsKeywordMetrics, 'id' | 'fetched_at'>): Promise<void> {
+    const row: AdsKeywordMetrics = {
+      ...metrics,
+      fetched_at: new Date(),
+    };
+    this.adsMetricsByKey.set(
+      this.makeAdsMetricsKey(metrics.query_id, metrics.geo, metrics.language_code, metrics.network),
+      row
+    );
+  }
+
+  async getAdsKeywordMetrics(
+    queryId: string,
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH'
+  ): Promise<AdsKeywordMetrics | undefined> {
+    return this.adsMetricsByKey.get(this.makeAdsMetricsKey(queryId, geo, languageCode, network));
+  }
+
+  async getAdsKeywordMetricsForQueries(
+    queryIds: string[],
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH'
+  ): Promise<Map<string, AdsKeywordMetrics>> {
+    const result = new Map<string, AdsKeywordMetrics>();
+    for (const queryId of queryIds) {
+      const row = await this.getAdsKeywordMetrics(queryId, geo, languageCode, network);
+      if (row) result.set(queryId, row);
+    }
+    return result;
+  }
+
+  // Opportunity scores management
+  async upsertOpportunityScore(score: Omit<OpportunityScore, 'id'>): Promise<void> {
+    const row: OpportunityScore = { ...score };
+    this.opportunityScoresByKey.set(
+      this.makeOpportunityScoreKey(score.query_id, score.geo, score.language_code, score.network, score.window),
+      row
+    );
+  }
+
+  async getTopOpportunityScores(
+    limit: number = 50,
+    window: '90d' = '90d',
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: OpportunityScore['network'] = 'GOOGLE_SEARCH'
+  ): Promise<OpportunityScore[]> {
+    const out: OpportunityScore[] = [];
+    for (const score of this.opportunityScoresByKey.values()) {
+      if (score.window !== window) continue;
+      if (score.geo !== geo) continue;
+      if (score.language_code !== languageCode) continue;
+      if (score.network !== network) continue;
+      out.push(score);
+    }
+    out.sort((a, b) => b.opportunity_score - a.opportunity_score);
+    return out.slice(0, limit);
   }
 
   // Opportunity cluster management
-  addCluster(cluster: Omit<OpportunityCluster, 'id'>): OpportunityCluster {
-    const id = `cluster_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newCluster: OpportunityCluster = {
-      ...cluster,
-      id,
-    };
+  async addCluster(cluster: Omit<OpportunityCluster, 'id'>): Promise<OpportunityCluster> {
+    const id = `cluster_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const newCluster: OpportunityCluster = { ...cluster, id };
     this.opportunityClusters.set(id, newCluster);
     return newCluster;
   }
 
-  getCluster(id: string): OpportunityCluster | undefined {
+  async getCluster(id: string): Promise<OpportunityCluster | undefined> {
     return this.opportunityClusters.get(id);
   }
 
-  getAllClusters(): OpportunityCluster[] {
-    return Array.from(this.opportunityClusters.values());
+  async findExistingClusterWithQueries(queryIds: string[]): Promise<string | undefined> {
+    const wanted = new Set(queryIds);
+    for (const [clusterId, cluster] of this.opportunityClusters.entries()) {
+      const have = new Set(cluster.queries);
+      if (have.size !== wanted.size) continue;
+      let allMatch = true;
+      for (const qid of wanted) {
+        if (!have.has(qid)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) return clusterId;
+    }
+    return undefined;
   }
 
-  updateCluster(id: string, updates: Partial<OpportunityCluster>): boolean {
-    const cluster = this.opportunityClusters.get(id);
-    if (!cluster) return false;
-    this.opportunityClusters.set(id, { ...cluster, ...updates });
+  async getAllClusters(): Promise<OpportunityCluster[]> {
+    return Array.from(this.opportunityClusters.values()).sort((a, b) => b.average_score - a.average_score);
+  }
+
+  async updateCluster(id: string, updates: Partial<OpportunityCluster>): Promise<boolean> {
+    const existing = this.opportunityClusters.get(id);
+    if (!existing) return false;
+    this.opportunityClusters.set(id, { ...existing, ...updates });
     return true;
   }
 
-  removeCluster(id: string): boolean {
+  async removeCluster(id: string): Promise<boolean> {
     return this.opportunityClusters.delete(id);
   }
 
   // Intent classification management
-  setIntentClassification(classification: IntentClassification): void {
+  async setIntentClassification(classification: IntentClassification): Promise<void> {
     this.intentClassifications.set(classification.query_id, classification);
   }
 
-  getIntentClassification(queryId: string): IntentClassification | undefined {
+  async getIntentClassification(queryId: string): Promise<IntentClassification | undefined> {
     return this.intentClassifications.get(queryId);
   }
 
-  getAllIntentClassifications(): IntentClassification[] {
+  async getAllIntentClassifications(): Promise<IntentClassification[]> {
     return Array.from(this.intentClassifications.values());
   }
 
-  // Utility methods
-  clearAll(): void {
-    this.queries.clear();
-    this.trendSnapshots = [];
-    this.trendScores.clear();
-    this.opportunityClusters.clear();
-    this.intentClassifications.clear();
+  async getQueriesByIntent(intent: IntentClassification['intent_type']): Promise<Query[]> {
+    const ids = Array.from(this.intentClassifications.values())
+      .filter((c) => c.intent_type === intent)
+      .map((c) => c.query_id);
+    const out: Query[] = [];
+    for (const id of ids) {
+      const q = this.queries.get(id);
+      if (q) out.push(q);
+    }
+    return out;
   }
 
-  getQueriesByIntent(intent: 'pain' | 'tool' | 'transition' | 'education'): Query[] {
-    const classifications = Array.from(this.intentClassifications.values())
-      .filter(c => c.intent_type === intent)
-      .map(c => c.query_id);
-    return classifications
-      .map(id => this.queries.get(id))
-      .filter((q): q is Query => q !== undefined);
+  // Related Topics management
+  async saveRelatedTopics(
+    queryId: string,
+    topics: Omit<RelatedTopic, 'id' | 'query_id' | 'created_at'>[]
+  ): Promise<void> {
+    const mapped: RelatedTopic[] = topics.map((t) => ({
+      id: `topic_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      query_id: queryId,
+      topic: t.topic,
+      value: t.value,
+      is_rising: t.is_rising,
+      link: t.link,
+      created_at: new Date(),
+    }));
+    this.relatedTopicsByQueryId.set(queryId, mapped);
+  }
+
+  async getRelatedTopics(queryId: string): Promise<RelatedTopic[]> {
+    return this.relatedTopicsByQueryId.get(queryId) ?? [];
+  }
+
+  // Related Questions management (formerly People Also Ask)
+  async saveRelatedQuestions(
+    queryId: string,
+    questions: Omit<RelatedQuestion, 'id' | 'query_id' | 'created_at'>[]
+  ): Promise<void> {
+    const mapped: RelatedQuestion[] = questions.map((q) => ({
+      id: `rq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      query_id: queryId,
+      question: q.question,
+      answer: q.answer,
+      snippet: q.snippet,
+      title: q.title,
+      link: q.link,
+      source_logo: q.source_logo,
+      created_at: new Date(),
+    }));
+    this.relatedQuestionsByQueryId.set(queryId, mapped);
+  }
+
+  async getRelatedQuestions(queryId: string): Promise<RelatedQuestion[]> {
+    return this.relatedQuestionsByQueryId.get(queryId) ?? [];
+  }
+
+  // Backward compatibility aliases (deprecated)
+  async savePeopleAlsoAsk(
+    queryId: string,
+    paa: Omit<PeopleAlsoAsk, 'id' | 'query_id' | 'created_at'>[]
+  ): Promise<void> {
+    return this.saveRelatedQuestions(queryId, paa);
+  }
+
+  async getPeopleAlsoAsk(queryId: string): Promise<PeopleAlsoAsk[]> {
+    return this.getRelatedQuestions(queryId);
+  }
+
+  // Cluster intent aggregation (no-op in memory; kept for API compatibility)
+  async updateClusterIntentData(
+    clusterId: string,
+    relatedTopics?: RelatedTopic[],
+    paaQuestions?: PeopleAlsoAsk[]
+  ): Promise<void> {
+    const cluster = this.opportunityClusters.get(clusterId);
+    if (!cluster) return;
+    this.opportunityClusters.set(clusterId, {
+      ...cluster,
+      related_topics: relatedTopics,
+      paa_questions: paaQuestions,
+    });
+  }
+
+  async aggregateClusterIntentData(_clusterId: string): Promise<void> {
+    // Intentionally no-op for E2E/local runs.
+  }
+
+  // Entrepreneur profile management (minimal)
+  async getEntrepreneurProfile(): Promise<EntrepreneurProfile | null> {
+    return this.entrepreneurProfile;
+  }
+
+  async saveEntrepreneurProfile(
+    profile: Omit<EntrepreneurProfile, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+  ): Promise<EntrepreneurProfile> {
+    const next: EntrepreneurProfile = {
+      ...profile,
+      id: this.entrepreneurProfile?.id ?? `profile_${Date.now()}`,
+      created_at: this.entrepreneurProfile?.created_at ?? new Date(),
+      updated_at: new Date(),
+    };
+    this.entrepreneurProfile = next;
+    return next;
+  }
+
+  // Test helper
+  async clearAll(): Promise<void> {
+    this.queries.clear();
+    this.trendSnapshotsByKey.clear();
+    this.trendScoresByKey.clear();
+    this.adsMetricsByKey.clear();
+    this.opportunityScoresByKey.clear();
+    this.opportunityClusters.clear();
+    this.intentClassifications.clear();
+    this.relatedTopicsByQueryId.clear();
+    this.relatedQuestionsByQueryId.clear();
+    this.entrepreneurProfile = null;
   }
 }
 
@@ -267,7 +559,19 @@ class Storage {
 // The in-memory Storage class above is kept for reference but we use database storage
 import { storage as dbStorage } from './storage-db';
 
-// Export database storage as the default storage
-// This replaces the in-memory storage with database-backed storage
-export const storage = dbStorage;
+const isE2ETestMode =
+  process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true' || process.env.E2E_TEST_MODE === 'true';
+
+const hasSupabaseConfig =
+  typeof process.env.NEXT_PUBLIC_SUPABASE_URL === 'string' &&
+  process.env.NEXT_PUBLIC_SUPABASE_URL.length > 0 &&
+  (typeof process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY === 'string' ||
+    typeof process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY === 'string') &&
+  ((process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) || '')
+    .length > 0;
+
+export const memoryStorage = new MemoryStorage();
+
+// Export storage adapter (DB by default; memory in E2E / missing Supabase config)
+export const storage = isE2ETestMode || !hasSupabaseConfig ? memoryStorage : dbStorage;
 

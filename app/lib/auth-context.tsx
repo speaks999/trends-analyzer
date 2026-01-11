@@ -21,6 +21,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // E2E mode: bypass Supabase completely (no network calls, deterministic token).
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === 'true') {
+      const fakeUser = {
+        id: 'e2e-user',
+        aud: 'authenticated',
+        role: 'authenticated',
+        email: 'e2e@example.com',
+        app_metadata: {},
+        user_metadata: {},
+        created_at: new Date().toISOString(),
+      } as unknown as User;
+
+      const fakeSession = {
+        access_token: 'e2e-access-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        refresh_token: 'e2e-refresh-token',
+        user: fakeUser,
+      } as unknown as Session;
+
+      setSession(fakeSession);
+      setUser(fakeUser);
+      setLoading(false);
+      return;
+    }
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
