@@ -46,19 +46,81 @@ export async function POST(request: NextRequest) {
     }
 
     const queryIds = queries.map((q) => q.id);
+    const forceRefresh = body.forceRefresh === true;
+
+    // Check if opportunity scores exist and are recent (within 7 days)
+    const hasRecentScores = await storage.hasRecentOpportunityScores(
+      queryIds,
+      geo,
+      languageCode,
+      network,
+      window,
+      7
+    );
+
+    const queriesNeedingRefresh = forceRefresh 
+      ? queries 
+      : queries.filter(q => !hasRecentScores.get(q.id));
+
+    if (queriesNeedingRefresh.length === 0 && !forceRefresh) {
+      console.log(`[Opportunity Refresh] All ${queries.length} queries have recent opportunity scores, returning cached data`);
+      const top = await storage.getTopOpportunityScores(limit, window, geo, languageCode, network);
+      const queryText = new Map(queries.map((q) => [q.id, q.text]));
+      const adsById = await storage.getAdsKeywordMetricsForQueries(queryIds, geo, languageCode, network);
+
+      const responseTop = top.map((s) => {
+        const ads = adsById.get(s.query_id);
+        return {
+          ...s,
+          query_text: queryText.get(s.query_id) || 'Unknown',
+          ads: ads
+            ? {
+                avg_monthly_searches: ads.avg_monthly_searches ?? null,
+                competition: ads.competition ?? null,
+                competition_index: ads.competition_index ?? null,
+                top_of_page_bid_low_micros: ads.top_of_page_bid_low_micros ?? null,
+                top_of_page_bid_high_micros: ads.top_of_page_bid_high_micros ?? null,
+                ad_impressions: ads.ad_impressions ?? null,
+                clicks: ads.clicks ?? null,
+                ctr: ads.ctr ?? null,
+                avg_cpc_micros: ads.avg_cpc_micros ?? null,
+                currency_code: ads.currency_code ?? null,
+              }
+            : null,
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: `Using cached opportunity scores for ${queries.length} queries`,
+        updated: 0,
+        cached: queries.length,
+        top: responseTop,
+        targeting: { geo, languageCode, network, window },
+      });
+    }
+
+    console.log(`[Opportunity Refresh] Recalculating scores for ${queriesNeedingRefresh.length} queries`);
 
     // Momentum score (TOS) is computed from trend_snapshots.
     const tos = await calculateTOSForQueries(queryIds, window, storage);
     const tosById = new Map(tos.map((s) => [s.query_id, s]));
 
     // Ads metrics (absolute demand + CPC proxy)
+    // Prefer ad traffic data (ad_impressions, avg_cpc_micros) when available as it's more accurate
     const adsById = await storage.getAdsKeywordMetricsForQueries(queryIds, geo, languageCode, network);
 
+    // For demand: prefer ad_impressions (more accurate) over avg_monthly_searches
     const volumes = Array.from(adsById.values())
-      .map((m) => m.avg_monthly_searches)
+      .map((m) => m.ad_impressions ?? m.avg_monthly_searches)
       .filter((v): v is number => typeof v === 'number' && isFinite(v) && v > 0);
+    
+    // For CPC: prefer avg_cpc_micros (actual historical CPC) over top_of_page_bid_high_micros (bid estimate)
     const cpcs = Array.from(adsById.values())
-      .map((m) => microsToCurrency(m.top_of_page_bid_high_micros))
+      .map((m) => {
+        const cpc = m.avg_cpc_micros ?? m.top_of_page_bid_high_micros;
+        return microsToCurrency(cpc);
+      })
       .filter((v): v is number => typeof v === 'number' && isFinite(v) && v > 0);
 
     const vMin = volumes.length ? Math.min(...volumes) : 0;
@@ -67,13 +129,24 @@ export async function POST(request: NextRequest) {
     const cMax = cpcs.length ? Math.max(...cpcs) : 0;
 
     let updated = 0;
+    let cached = 0;
 
     for (const q of queries) {
+      // Skip if we have recent cached scores and not forcing refresh
+      if (!forceRefresh && hasRecentScores.get(q.id) && queriesNeedingRefresh.findIndex(nq => nq.id === q.id) === -1) {
+        cached += 1;
+        continue;
+      }
       const momentum = tosById.get(q.id);
       const ads = adsById.get(q.id);
 
-      const demandScore = ads?.avg_monthly_searches ? logScaledScore(ads.avg_monthly_searches, vMin, vMax) : 0;
-      const cpc = microsToCurrency(ads?.top_of_page_bid_high_micros);
+      // Demand score: prefer ad_impressions (more accurate) over avg_monthly_searches
+      const demandValue = ads?.ad_impressions ?? ads?.avg_monthly_searches;
+      const demandScore = demandValue ? logScaledScore(demandValue, vMin, vMax) : 0;
+      
+      // CPC: prefer avg_cpc_micros (actual historical CPC) over top_of_page_bid_high_micros (bid estimate)
+      const cpcMicros = ads?.avg_cpc_micros ?? ads?.top_of_page_bid_high_micros;
+      const cpc = microsToCurrency(cpcMicros);
       const cpcScore = cpc ? logScaledScore(cpc, cMin, cMax) : 0;
 
       const momentumScore = momentum?.score ?? 0;
@@ -116,11 +189,17 @@ export async function POST(request: NextRequest) {
         query_text: queryText.get(s.query_id) || 'Unknown',
         ads: ads
           ? {
+              // Search volume metrics
               avg_monthly_searches: ads.avg_monthly_searches ?? null,
               competition: ads.competition ?? null,
               competition_index: ads.competition_index ?? null,
               top_of_page_bid_low_micros: ads.top_of_page_bid_low_micros ?? null,
               top_of_page_bid_high_micros: ads.top_of_page_bid_high_micros ?? null,
+              // Ad traffic metrics (more accurate)
+              ad_impressions: ads.ad_impressions ?? null,
+              clicks: ads.clicks ?? null,
+              ctr: ads.ctr ?? null,
+              avg_cpc_micros: ads.avg_cpc_micros ?? null,
               currency_code: ads.currency_code ?? null,
             }
           : null,
@@ -129,8 +208,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Updated opportunity scores for ${updated} queries`,
+      message: `Updated opportunity scores for ${updated} queries${cached > 0 ? `, ${cached} used cached` : ''}`,
       updated,
+      cached,
       top: responseTop,
       targeting: { geo, languageCode, network, window },
     });

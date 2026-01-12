@@ -65,7 +65,7 @@ export default function OpportunityTable(props: { rows: OpportunityRow[] }) {
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Opportunity (v2)</h3>
           <p className="text-sm text-gray-600">
-            Combines <span className="font-medium">Demand</span> (monthly searches), <span className="font-medium">Momentum</span> (TOS),
+            Combines <span className="font-medium">Demand</span> (monthly searches), <span className="font-medium">Momentum</span> (trend growth),
             and <span className="font-medium">CPC</span> (top-of-page bids).
           </p>
         </div>
@@ -80,7 +80,7 @@ export default function OpportunityTable(props: { rows: OpportunityRow[] }) {
               <th className="py-2 pr-3">Demand</th>
               <th className="py-2 pr-3">CPC (high)</th>
               <th className="py-2 pr-3">Competition</th>
-              <th className="py-2 pr-3">Momentum (TOS)</th>
+              <th className="py-2 pr-3">Momentum</th>
               <th className="py-2 pr-3">Efficiency</th>
             </tr>
           </thead>

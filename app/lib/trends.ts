@@ -1,4 +1,4 @@
-// Google Trends API wrapper using SerpApi
+// Trend data management using DataForSEO and cached data
 
 export type TimeWindow = '90d';
 export type GeoRegion = 'US';
@@ -20,11 +20,14 @@ export interface InterestOverTimeResult {
   geo?: string; // Region code (e.g., 'US')
 }
 
+// Deprecated: Regional interest data is no longer available (was from SerpAPI)
 export interface RegionalInterest {
   region: string;
   value: number;
 }
 
+// Deprecated: Related queries from Google Trends are no longer available (was from SerpAPI)
+// Use RelatedTopic from DataForSEO SERP instead
 export interface RelatedQuery {
   query: string;
   value: number;
@@ -41,383 +44,47 @@ export type RelatedTopic = {
 
 export interface TrendResult {
   interestOverTime: InterestOverTimeResult[];
-  regionalInterest?: RegionalInterest[];
-  relatedQueries?: RelatedQuery[];
-  relatedTopics?: RelatedTopic[];
-  peopleAlsoAsk?: import('./search-intent').PeopleAlsoAskResponse[];
+  regionalInterest?: RegionalInterest[]; // Deprecated: Always undefined (was from SerpAPI)
+  relatedQueries?: RelatedQuery[]; // Deprecated: Always undefined (was from SerpAPI)
+  relatedTopics?: RelatedTopic[]; // From DataForSEO SERP
+  peopleAlsoAsk?: import('./search-intent').PeopleAlsoAskResponse[]; // From DataForSEO SERP
 }
 
-/**
- * Convert time window to SerpApi date format
- */
-function getSerpApiDate(window: TimeWindow): string {
-  // Only 90d window supported
-  return 'today 3-m'; // 3 months = ~90 days
-}
+// Note: getInterestOverTime() was removed - it's no longer needed.
+// Trend data now comes from DataForSEO via the trends API route.
 
 /**
- * Fetch interest over time for a query using SerpApi
- * 
- * IMPORTANT: When multiple keywords are provided, they are queried together in a single API call.
- * Google Trends normalizes the results relative to each other - the term with the highest 
- * average interest gets a score of 100, and other terms are scaled relative to it.
- * 
- * This means:
- * - Scores are relative within the comparison set, not absolute search volumes
- * - A term with score 50 means it has half the average interest of the highest-scoring term
- * - To compare terms properly, always query them together in the same call
- * 
- * @param keyword - Single keyword or array of keywords to compare
- * @param window - Time window for the data
- * @param geo - Geographic region
- * @returns Array of InterestOverTimeResult, one per keyword
- */
-export async function getInterestOverTime(
-  keyword: string | string[],
-  window: TimeWindow = '90d',
-  geo: GeoRegion = 'US'
-): Promise<InterestOverTimeResult[]> {
-  const apiKey = process.env.SERPAPI_API_KEY;
-  if (!apiKey) {
-    throw new Error('SERPAPI_API_KEY is not configured');
-  }
-
-  try {
-    const keywords = Array.isArray(keyword) ? keyword : [keyword];
-    const date = getSerpApiDate(window);
-
-    console.log(`Fetching interest over time for: ${keywords.join(', ')} (${window}, geo: ${geo})`);
-
-    // SerpApi supports multiple keywords in a single query (comma-separated)
-    const queryString = keywords.join(', ');
-
-    const params = new URLSearchParams({
-      engine: 'google_trends',
-      q: queryString,
-      api_key: apiKey,
-      date: date,
-      geo: geo,
-      data_type: 'TIMESERIES',
-      // Enable Ludicrous Speed mode for faster responses
-      ludicrous: '1',
-    });
-
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    console.log(`SerpApi URL: ${url.replace(apiKey, '***')}`);
-
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
-    }
-
-    const data = await response.json();
-
-    // Check for errors in response
-    if (data.error) {
-      throw new Error(`SerpApi error: ${data.error}`);
-    }
-
-    console.log('SerpApi response received:', {
-      hasInterestOverTime: !!data.interest_over_time,
-      timelineDataLength: data.interest_over_time?.timeline_data?.length || 0,
-    });
-
-    const timelineData = data.interest_over_time?.timeline_data || [];
-
-    if (timelineData.length === 0) {
-      console.warn(`No timeline data returned for ${keywords.join(', ')} (geo: ${geo})`);
-      return keywords.map((kw) => ({
-        query: kw, // Remove region suffix since we only search US
-        data: [],
-        window,
-        geo,
-      }));
-    }
-
-    // Process timeline data
-    // SerpApi returns data in format: { date, timestamp, values: [{ query, value, extracted_value }] }
-    return keywords.map((kw, index) => {
-      const data: TrendDataPoint[] = timelineData.map((point: any) => {
-        // Find the value for this keyword in the values array
-        let value = 0;
-        if (point.values && Array.isArray(point.values)) {
-          // If multiple keywords, find the one matching this keyword
-          const keywordValue = point.values.find((v: any) => 
-            v.query?.toLowerCase() === kw.toLowerCase()
-          );
-          const rawValue = keywordValue?.extracted_value || keywordValue?.value || 0;
-          
-          // If not found by query name, use index
-          const rawValueByIndex = point.values[index]?.extracted_value || point.values[index]?.value || 0;
-          const finalRawValue = rawValue || rawValueByIndex;
-          
-          // Parse value - SerpAPI may return strings like "<1" for very low values
-          if (typeof finalRawValue === 'string') {
-            // Handle "<1" format - parse as 0.5 or 1
-            if (finalRawValue.startsWith('<')) {
-              value = 0.5; // Use 0.5 for "<1" values
-            } else {
-              value = parseFloat(finalRawValue) || 0;
-            }
-          } else {
-            value = Number(finalRawValue) || 0;
-          }
-        }
-
-        // Parse timestamp (can be string or number)
-        const timestamp = typeof point.timestamp === 'string' 
-          ? parseInt(point.timestamp, 10) 
-          : point.timestamp;
-        
-        return {
-          date: new Date(timestamp * 1000),
-          value: value,
-        };
-      });
-
-      console.log(`Processed ${data.length} data points for ${kw} (geo: ${geo})`);
-
-      // Only include region suffix if there are multiple regions
-      // Since we only search US now, use query name without region suffix
-      return {
-        query: kw, // Remove region suffix since we only search US
-        data,
-        window,
-        geo,
-      };
-    });
-  } catch (error) {
-    console.error(`Error fetching interest over time for ${keyword} (geo: ${geo}):`, error);
-    const keywords = Array.isArray(keyword) ? keyword : [keyword];
-    return keywords.map((kw) => ({
-      query: kw, // Remove region suffix since we only search US
-      data: [],
-      window,
-      geo,
-    }));
-  }
-}
-
-/**
- * Fetch interest by region using SerpApi
- * Returns empty array on error (graceful degradation)
- */
-export async function getInterestByRegion(
-  keyword: string,
-  geo: GeoRegion = 'US'
-): Promise<RegionalInterest[]> {
-  const apiKey = process.env.SERPAPI_API_KEY;
-  if (!apiKey) {
-    console.warn('SERPAPI_API_KEY is not configured, skipping regional interest');
-    return [];
-  }
-
-  try {
-    const params = new URLSearchParams({
-      engine: 'google_trends',
-      q: keyword,
-      api_key: apiKey,
-      date: 'today 12-m',
-      geo: geo,
-      data_type: 'GEO_MAP',
-      // Enable Ludicrous Speed mode for faster responses
-      ludicrous: '1',
-    });
-
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      // Return empty array instead of throwing - regional data is optional
-      console.warn(`SerpApi request failed for regional interest: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
-    const data = await response.json();
-
-    if (data.error) {
-      // Return empty array instead of throwing - regional data is optional
-      console.warn(`SerpApi error for regional interest: ${data.error}`);
-      return [];
-    }
-
-    // SerpApi returns compared_breakdown_by_region or interest_by_region
-    const regionData = data.compared_breakdown_by_region || data.interest_by_region || [];
-
-    return regionData.map((item: any) => {
-      const rawValue = item.values?.[0]?.extracted_value || item.values?.[0]?.value || 0;
-      let value: number;
-      
-      // Parse value - SerpAPI may return strings like "<1"
-      if (typeof rawValue === 'string') {
-        if (rawValue.startsWith('<')) {
-          value = 0.5; // Use 0.5 for "<1" values
-        } else {
-          value = parseFloat(rawValue) || 0;
-        }
-      } else {
-        value = Number(rawValue) || 0;
-      }
-      
-      return {
-        region: item.location || item.geo || item.region || 'Unknown',
-        value,
-      };
-    });
-  } catch (error) {
-    // Return empty array instead of throwing - regional data is optional
-    console.warn(`Error fetching interest by region for ${keyword}:`, error);
-    return [];
-  }
-}
-
-/**
- * Fetch related searches using SerpApi Google Search API
- * Uses the Related Searches endpoint: https://serpapi.com/related-searches
+ * Fetch related searches using DataForSEO SERP API
+ * DataForSEO provides both "Related Searches" and "People Also Search For" sections
  */
 export async function getRelatedTopics(
   keyword: string
 ): Promise<RelatedTopic[]> {
-  const apiKey = process.env.SERPAPI_API_KEY;
-  if (!apiKey) {
-    throw new Error('SERPAPI_API_KEY is not configured');
-  }
-
   try {
-    // Use Google Search API (not Google Trends) to get Related Searches
-    const params = new URLSearchParams({
-      engine: 'google',
-      q: keyword,
-      api_key: apiKey,
-    });
-
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (data.error) {
-      // Handle "no results" case gracefully - this is normal for some queries
-      const errorMessage = String(data.error).toLowerCase();
-      if (errorMessage.includes('hasn\'t returned any results') || 
-          errorMessage.includes('no results') ||
-          errorMessage.includes('insufficient data')) {
-        // This is expected for some queries - return empty array without logging as error
-        return [];
+    const { getRelatedTopicsFromSerp, isDataForSEOConfigured } = await import('./dataforseo-serp');
+    if (isDataForSEOConfigured()) {
+      const dataForSEOTopics = await getRelatedTopicsFromSerp(keyword, 'US');
+      if (dataForSEOTopics.length > 0) {
+        console.log(`[Related Topics] Using DataForSEO SERP: ${dataForSEOTopics.length} topics for "${keyword}"`);
+        return dataForSEOTopics;
       }
-      // For other errors, still throw but they'll be caught and logged
-      throw new Error(`SerpApi error: ${data.error}`);
+    } else {
+      console.warn('DataForSEO is not configured. Related topics will not be available.');
     }
-
-    // Check if related_searches exists - if not, return empty array (no results available)
-    if (!data.related_searches || !Array.isArray(data.related_searches)) {
-      return [];
-    }
-
-    // Map Related Searches to RelatedTopic format
-    // Related Searches API returns: { query, link, serpapi_link, block_position, items? }
-    const related: RelatedTopic[] = data.related_searches
-      .filter((item: any) => item.query && typeof item.query === 'string')
-      .map((item: any) => ({
-        topic: item.query,
-        value: 50, // Default value since Related Searches doesn't provide trend values
-        isRising: false, // Related Searches doesn't indicate rising status
-        link: item.link || item.serpapi_link || undefined,
-      }));
-
-    return related;
   } catch (error) {
-    // Only log as error if it's not a "no results" case
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (!errorMessage.toLowerCase().includes('hasn\'t returned any results') &&
-        !errorMessage.toLowerCase().includes('no results') &&
-        !errorMessage.toLowerCase().includes('insufficient data')) {
-      console.error(`Error fetching related searches for ${keyword}:`, error);
-    }
-    return [];
+    console.warn(`[Related Topics] DataForSEO SERP failed for "${keyword}":`, error instanceof Error ? error.message : String(error));
   }
-}
-
-/**
- * Fetch related queries using SerpApi
- */
-export async function getRelatedQueries(
-  keyword: string
-): Promise<RelatedQuery[]> {
-  const apiKey = process.env.SERPAPI_API_KEY;
-  if (!apiKey) {
-    throw new Error('SERPAPI_API_KEY is not configured');
-  }
-
-  try {
-    const params = new URLSearchParams({
-      engine: 'google_trends',
-      q: keyword,
-      api_key: apiKey,
-      date: 'today 12-m',
-      data_type: 'RELATED_QUERIES',
-    });
-
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`SerpApi request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (data.error) {
-      throw new Error(`SerpApi error: ${data.error}`);
-    }
-
-    // SerpApi returns related_queries with rising and top arrays
-    const risingQueries = data.related_queries?.rising || [];
-    const topQueries = data.related_queries?.top || [];
-
-    const related: RelatedQuery[] = [
-      ...risingQueries.map((item: any) => ({
-        query: item.query || item.term || '',
-        value: item.value || item.extracted_value || 0,
-        isRising: true,
-      })),
-      ...topQueries.map((item: any) => ({
-        query: item.query || item.term || '',
-        value: item.value || item.extracted_value || 0,
-        isRising: false,
-      })),
-    ];
-
-    return related.filter(q => q.query); // Filter out empty queries
-  } catch (error) {
-    console.error(`Error fetching related queries for ${keyword}:`, error);
-    return [];
-  }
+  return [];
 }
 
 /**
  * Fetch comprehensive trend data for a query with caching support
  * 
- * CRITICAL: When multiple keywords are provided, they are ALL queried together in each API call.
- * This ensures Google Trends normalizes them relative to each other, enabling proper comparison.
+ * CACHING: This function checks the database first for cached trend data.
+ * If cached data exists for all queries in a window/region combination, it uses that data.
  * 
- * For each time window and region combination:
- * - All keywords are sent in a single API call
- * - Google Trends returns normalized scores where the highest-scoring term gets 100
- * - Other terms are scaled relative to that peak
- * 
- * This means scores are comparable WITHIN each window/region combination, but may vary
- * across different time windows or regions (as search patterns change).
- * 
- * CACHING: This function now checks the database first. If cached data exists for all queries
- * in a window/region combination, it uses that data instead of calling SerpAPI.
- * Only missing or incomplete data is fetched from SerpAPI.
+ * NOTE: New trend data should be fetched via DataForSEO historical keyword data
+ * through the trends API route. This function only returns cached data.
  */
 export async function getTrendData(
   keyword: string | string[],
@@ -426,7 +93,7 @@ export async function getTrendData(
   includeRelated: boolean = true,
   regions: GeoRegion[] = ['US'],
   queryIdMap?: Map<string, string>, // Optional map of query text -> query ID for cache lookup
-  forceRefresh: boolean = false // Set to true to force refresh from SerpAPI
+  forceRefresh: boolean = false // Set to true to force refresh (currently only uses cache)
 ): Promise<TrendResult> {
   const keywords = Array.isArray(keyword) ? keyword : [keyword];
   
@@ -436,7 +103,7 @@ export async function getTrendData(
   console.log('Windows:', windows);
   console.log('Regions:', regions);
   console.log('Force refresh:', forceRefresh);
-  console.log('NOTE: Checking cache first, then fetching missing data from SerpAPI if needed');
+  console.log('NOTE: Checking cache first. New data should come from DataForSEO via trends API route.');
   
   const interestOverTime: InterestOverTimeResult[] = [];
 
@@ -507,24 +174,26 @@ export async function getTrendData(
 
           // If we have cached data for all queries, use it
           if (cachedData.length === keywords.length && missingQueries.length === 0) {
-            console.log(`✓ Using cached data for all ${keywords.length} queries (${window}, ${region})`);
-            return cachedData; // Return cached data, skip SerpAPI call
+            console.log(`✓ Using cached trend snapshot data for all ${keywords.length} queries (${window}, ${region})`);
+            return cachedData; // Return cached data
           } else if (missingQueries.length > 0) {
-            console.log(`⚠️ Missing cached data for ${missingQueries.length} queries:`, missingQueries);
-            console.log(`  Will fetch all ${keywords.length} queries together from SerpAPI for proper normalization`);
+            console.log(`⚠️ Missing cached trend snapshot data for ${missingQueries.length} queries:`, missingQueries);
+            console.log(`  Note: This is expected if monthly_searches data exists. The trends API route will use cached monthly_searches instead.`);
           }
         }
 
-        // Fetch from SerpAPI (either because cache is disabled, incomplete, or force refresh)
+        // If cache is disabled or incomplete, return empty data
+        // New data should be fetched via DataForSEO through the trends API route
+        // NOTE: This is normal - the trends API route will use cached monthly_searches from ads_keyword_metrics
         if (!useCache || missingQueries.length > 0 || forceRefresh) {
-          console.log(`Fetching ${window} data for keywords:`, keywords, `(region: ${region})`);
-          // All keywords queried together = normalized relative to each other
-          const windowData = await getInterestOverTime(keywords, window, region);
-          console.log(`${window} (${region}) returned ${windowData.length} series:`, windowData.map(s => ({
-            query: s.query,
-            dataPoints: s.data.length
-          })));
-          return windowData;
+          console.log(`[getTrendData] No cached trend snapshot data available (this is OK - trends API route will use cached monthly_searches if available)`);
+          // Return empty results for missing queries
+          return keywords.map(k => ({
+            query: k,
+            data: [],
+            window,
+            geo: region,
+          }));
         }
 
         return [];
@@ -542,96 +211,19 @@ export async function getTrendData(
   
   console.log(`Total interestOverTime series: ${interestOverTime.length}`);
 
-  // Fetch regional interest (only for first keyword if multiple, and for US by default)
-  // getInterestByRegion now handles errors gracefully and returns empty array
-  let regionalInterest: RegionalInterest[] | undefined;
-  if (includeRegional && keywords.length > 0) {
-    regionalInterest = await getInterestByRegion(keywords[0], 'US');
-    if (regionalInterest.length === 0) {
-      regionalInterest = undefined; // Don't include empty array in response
-    }
-  }
+  // Regional interest is no longer available (deprecated with SerpAPI removal)
+  const regionalInterest: RegionalInterest[] | undefined = undefined;
 
-  // Fetch related queries for ALL keywords (not just first)
-  let relatedQueries: RelatedQuery[] | undefined;
-  if (includeRelated && keywords.length > 0) {
-    try {
-      // Fetch for all keywords and combine
-      const allRelatedQueries = await Promise.all(
-        keywords.map(keyword => getRelatedQueries(keyword).catch(() => []))
-      );
-      // Combine and deduplicate by query text
-      const queryMap = new Map<string, RelatedQuery>();
-      allRelatedQueries.flat().forEach(q => {
-        const key = q.query.toLowerCase();
-        if (!queryMap.has(key) || q.isRising) {
-          queryMap.set(key, q);
-        }
-      });
-      relatedQueries = Array.from(queryMap.values());
-      if (relatedQueries.length === 0) {
-        relatedQueries = undefined;
-      }
-    } catch (error) {
-      console.error('Error fetching related queries:', error);
-    }
-  }
+  // Related queries are no longer available (deprecated with SerpAPI removal)
+  // Use getRelatedTopics() for related search topics from DataForSEO SERP instead
+  const relatedQueries: RelatedQuery[] | undefined = undefined;
 
-  // Fetch related topics for ALL keywords (not just first)
-  let relatedTopics: RelatedTopic[] | undefined;
-  if (includeRelated && keywords.length > 0) {
-    try {
-      // Fetch for all keywords and combine
-      const allRelatedTopics = await Promise.all(
-        keywords.map(keyword => getRelatedTopics(keyword).catch(() => []))
-      );
-      // Combine and deduplicate by topic text, prefer rising topics
-      const topicMap = new Map<string, RelatedTopic>();
-      allRelatedTopics.flat().forEach(t => {
-        // Ensure t.topic is a valid string
-        if (!t || !t.topic || typeof t.topic !== 'string') return;
-        const key = t.topic.toLowerCase();
-        const existing = topicMap.get(key);
-        if (!existing || t.isRising || t.value > existing.value) {
-          topicMap.set(key, t);
-        }
-      });
-      relatedTopics = Array.from(topicMap.values());
-      if (relatedTopics.length === 0) {
-        relatedTopics = undefined; // Don't include empty array in response
-      }
-    } catch (error) {
-      console.error('Error fetching related topics:', error);
-    }
-  }
-
-  // Fetch People Also Ask questions for ALL keywords (not just first)
-  let peopleAlsoAsk: import('./search-intent').PeopleAlsoAskResponse[] | undefined;
-  if (includeRelated && keywords.length > 0) {
-    try {
-      const { getPeopleAlsoAsk } = await import('./search-intent');
-      // Fetch for all keywords and combine
-      const allPaaData = await Promise.all(
-        keywords.map(keyword => getPeopleAlsoAsk(keyword).catch(() => []))
-      );
-      // Combine and deduplicate by question text
-      const questionMap = new Map<string, import('./search-intent').PeopleAlsoAskResponse>();
-      allPaaData.flat().forEach(p => {
-        // Ensure p.question is a valid string
-        if (!p || !p.question || typeof p.question !== 'string') return;
-        const key = p.question.toLowerCase();
-        if (!questionMap.has(key)) {
-          questionMap.set(key, p);
-        }
-      });
-      const combinedPaa = Array.from(questionMap.values());
-      if (combinedPaa.length > 0) {
-        peopleAlsoAsk = combinedPaa;
-      }
-    } catch (error) {
-      console.error('Error fetching People Also Ask:', error);
-    }
-  }
+  // NOTE: Related topics and PAA questions are now handled by the trends API route
+  // which checks the database cache first before fetching from DataForSEO.
+  // We don't fetch them here to avoid redundant API calls.
+  // The trends API route will fetch and store them if needed.
+  const relatedTopics: RelatedTopic[] | undefined = undefined;
+  const peopleAlsoAsk: import('./search-intent').PeopleAlsoAskResponse[] | undefined = undefined;
 
   return {
     interestOverTime,
@@ -643,13 +235,10 @@ export async function getTrendData(
 }
 
 /**
- * Normalize trend data to 0-100 scale (already normalized by Google Trends, but ensure consistency)
+ * Normalize trend data to 0-100 scale
  * 
- * IMPORTANT: Google Trends data is already normalized:
- * - When multiple terms are queried together, they are normalized relative to each other
- * - The term with highest average interest gets 100, others are scaled relative to it
- * - This allows for proper comparison between terms in the same query
- * - Do NOT re-normalize data that comes from a multi-term query, as it breaks the relative comparison
+ * Note: DataForSEO provides actual search volumes (not normalized).
+ * This function can normalize search volumes to 0-100 scale if needed.
  */
 export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
   if (data.length === 0) return data;
@@ -657,11 +246,10 @@ export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
   const maxValue = Math.max(...data.map(d => d.value));
   if (maxValue === 0) return data;
 
-  // Google Trends already normalizes to 0-100 when terms are queried together
-  // Only normalize if values are clearly outside this range (likely an error or different source)
+  // If values are already in 0-100 range, assume they're already normalized
   if (maxValue <= 100) return data;
 
-  // Otherwise normalize (shouldn't happen with proper Google Trends data)
+  // Normalize larger values (e.g., search volumes) to 0-100 scale
   return data.map(point => ({
     ...point,
     value: (point.value / maxValue) * 100,
@@ -670,11 +258,8 @@ export function normalizeTrendData(data: TrendDataPoint[]): TrendDataPoint[] {
 
 /**
  * Normalize multiple trend series relative to each other for proper comparison
- * This ensures that when comparing terms from different API calls, they are normalized
+ * This ensures that when comparing terms from different data sources, they are normalized
  * relative to the highest value across all series in the same time window and region.
- * 
- * CRITICAL: This should only be used when terms were NOT queried together in the same API call.
- * When terms are queried together, Google Trends already normalizes them correctly.
  */
 export function normalizeSeriesRelative(
   series: InterestOverTimeResult[],

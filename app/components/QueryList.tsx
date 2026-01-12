@@ -90,9 +90,9 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
         console.warn(`[QueryList] Questions response not OK for ${query.id}:`, questionsResponse?.status, await questionsResponse?.text());
       }
 
-      // If no data exists, fetch it from SERPAPI via the enrich endpoint
+      // If no data exists, fetch it from DataForSEO via the enrich endpoint
       if (topics.length === 0 && questions.length === 0) {
-        console.log(`[QueryList] No data for query ${query.id}, fetching from SERPAPI...`);
+        console.log(`[QueryList] No data for query ${query.id}, fetching from DataForSEO...`);
         
         try {
           const enrichResponse = await fetch('/api/cluster/enrich', {
@@ -226,7 +226,7 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
     // Clear the fetched flag so it can be fetched again
     fetchedQueriesRef.current.delete(query.id);
     
-    // Force re-fetch from SERPAPI
+    // Force re-fetch from DataForSEO
     setLoadingQueries(prev => new Set(prev).add(query.id));
     
     try {

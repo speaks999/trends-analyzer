@@ -63,6 +63,31 @@ export default function TrendsChart({ window = '90d', series }: TrendsChartProps
     );
   }
 
+  // Determine if we're showing search volumes (values > 100) or normalized trends (0-100)
+  // DataForSEO provides actual search volumes (can be thousands), Google Trends is normalized (0-100)
+  const allValues = chartData.flatMap(d => 
+    seriesForWindow.map(s => d[s.name]).filter((v): v is number => typeof v === 'number')
+  );
+  const maxValue = allValues.length > 0 ? Math.max(...allValues) : 100;
+  const minValue = allValues.length > 0 ? Math.min(...allValues) : 0;
+  const isSearchVolume = maxValue > 100; // If max value > 100, it's likely search volume, not normalized
+
+  // Format Y-axis label and domain
+  const yAxisLabel = isSearchVolume ? 'Search Volume' : 'Interest (0-100)';
+  const yAxisDomain: [number, number] = isSearchVolume 
+    ? [0, Math.ceil(maxValue * 1.1)] // Add 10% padding for search volumes
+    : [0, 100]; // Fixed domain for normalized trends
+
+  // Custom tooltip formatter for search volumes
+  const formatTooltipValue = (value: number) => {
+    if (value === null || value === undefined) return 'N/A';
+    if (isSearchVolume) {
+      // Format large numbers with commas
+      return new Intl.NumberFormat().format(Math.round(value));
+    }
+    return value.toFixed(1);
+  };
+
   return (
     <div className="w-full h-96 p-2 md:p-4">
       <ResponsiveContainer width="100%" height="100%">
@@ -76,10 +101,21 @@ export default function TrendsChart({ window = '90d', series }: TrendsChartProps
             interval="preserveStartEnd"
           />
           <YAxis
-            domain={[0, 100]}
-            label={{ value: 'Interest (0-100)', angle: -90, position: 'insideLeft' }}
+            domain={yAxisDomain}
+            label={{ value: yAxisLabel, angle: -90, position: 'insideLeft' }}
+            tickFormatter={(value) => {
+              if (isSearchVolume) {
+                // Format large numbers (e.g., 1000 -> 1K, 1000000 -> 1M)
+                if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+                if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+              }
+              return value.toString();
+            }}
           />
-          <Tooltip />
+          <Tooltip 
+            formatter={(value: any) => formatTooltipValue(value)}
+            labelFormatter={(label) => `Date: ${label}`}
+          />
           <Legend wrapperStyle={{ paddingTop: '20px' }} />
           {seriesForWindow.map((s, index) => (
             <Line

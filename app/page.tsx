@@ -8,9 +8,7 @@ import QueryInput from '@/app/components/QueryInput';
 import QueryList from '@/app/components/QueryList';
 import AISuggestions from '@/app/components/AISuggestions';
 import TrendsChart from '@/app/components/TrendsChart';
-import TrendScores from '@/app/components/TrendScores';
 import OpportunityTable from '@/app/components/OpportunityTable';
-import { TrendScoreResult } from '@/app/lib/scoring';
 import { useQueryManagement } from '@/app/lib/hooks/useQueryManagement';
 import { useAuthHeaders } from '@/app/lib/hooks/useAuthHeaders';
 
@@ -23,14 +21,11 @@ function HomeContent() {
   const [trendSeries, setTrendSeries] = useState<
     Array<{ query: string; window: '90d'; data: Array<{ date: string; value: number }> }>
   >([]);
-  const [trendScores, setTrendScores] = useState<TrendScoreResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [trendsError, setTrendsError] = useState<string | null>(null);
 
-  // Opportunity state (Google Ads + Trends)
+  // Opportunity state (automatically loaded when trends are fetched)
   const [opportunityRows, setOpportunityRows] = useState<any[]>([]);
-  const [opportunityLoading, setOpportunityLoading] = useState(false);
-  const [opportunityError, setOpportunityError] = useState<string | null>(null);
 
   const loadOpportunity = useCallback(async () => {
     if (queries.length === 0) return;
@@ -46,58 +41,6 @@ function HomeContent() {
       // non-blocking
     }
   }, [queries.length, getAuthHeaders]);
-
-  const handleRefreshOpportunity = useCallback(async () => {
-    if (queries.length === 0) return;
-    setOpportunityLoading(true);
-    setOpportunityError(null);
-    try {
-      const queryIds = queries.map((q) => q.id);
-
-      const adsResp = await fetch('/api/ads/metrics', {
-        method: 'POST',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          queryIds,
-          geo: 'US',
-          languageCode: 'en',
-          network: 'GOOGLE_SEARCH',
-          currencyCode: 'USD',
-        }),
-      });
-      const adsData = await adsResp.json();
-      if (!adsResp.ok || !adsData.success) {
-        throw new Error(adsData?.error || 'Failed to fetch Google Ads metrics');
-      }
-
-      const oppResp = await fetch('/api/opportunity/refresh', {
-        method: 'POST',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          window: '90d',
-          geo: 'US',
-          languageCode: 'en',
-          network: 'GOOGLE_SEARCH',
-          limit: 50,
-        }),
-      });
-      const oppData = await oppResp.json();
-      if (!oppResp.ok || !oppData.success) {
-        throw new Error(oppData?.error || 'Failed to refresh opportunity scores');
-      }
-      setOpportunityRows(Array.isArray(oppData.top) ? oppData.top : []);
-    } catch (e) {
-      setOpportunityError(e instanceof Error ? e.message : 'Failed to refresh opportunity');
-    } finally {
-      setOpportunityLoading(false);
-    }
-  }, [queries, getAuthHeaders]);
 
   // Auto-fetch trends when "Compare Term Trends" is clicked
   const handleViewTrends = useCallback(async () => {
@@ -127,34 +70,6 @@ function HomeContent() {
         const interestOverTime = data.data?.interestOverTime || [];
         setTrendSeries(interestOverTime);
 
-        if (data.tosScores && data.tosScores.length > 0) {
-          const sortedScores = data.tosScores.map((s: any) => ({
-            query_id: s.query_id,
-            score: s.score,
-            classification: s.classification,
-            breakdown: {
-              slope: 0,
-              acceleration: 0,
-              consistency: 0,
-            },
-          })).sort((a: TrendScoreResult, b: TrendScoreResult) => b.score - a.score);
-          setTrendScores(sortedScores);
-        }
-
-        // Also refresh scores from backend
-        try {
-          const scoreResponse = await fetch('/api/score/refresh', {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ window: '90d' }),
-          });
-          const scoreData = await scoreResponse.json();
-          if (scoreData.success && scoreData.topQueries) {
-            setTrendScores(scoreData.topQueries);
-          }
-        } catch (scoreError) {
-          console.warn('Error refreshing scores:', scoreError);
-        }
 
         // Load existing opportunity scores (if any)
         loadOpportunity();
@@ -181,7 +96,6 @@ function HomeContent() {
     if (queries.length === 0) {
       setShowTrends(false);
       setTrendSeries([]);
-      setTrendScores([]);
     }
   }, [queries.length]);
 
@@ -205,7 +119,7 @@ function HomeContent() {
               <div>
                 <h2 className="text-xl font-bold text-gray-900 mb-1">Getting started</h2>
                 <p className="text-gray-600">
-                  Add keywords, compare trends, then pull Google Ads metrics to compute Opportunity scores.
+                  Add keywords and compare trends. Opportunity scores are automatically calculated when you view trends.
                   <span className="ml-2">
                     <Link href="/help" className="text-blue-600 hover:text-blue-800 underline font-medium">
                       Read the full guide
@@ -233,20 +147,15 @@ function HomeContent() {
                 </div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="font-semibold text-gray-900 mb-1">2) Compare trends (TOS)</div>
+                <div className="font-semibold text-gray-900 mb-1">2) Compare trends</div>
                 <div className="text-gray-600">
-                  Fetch Google Trends time series and momentum score.
-                  <span className="ml-2">
-                    <Link href="/help#tos-trend-opportunity-score" className="text-blue-600 hover:text-blue-800 underline">
-                      What is TOS?
-                    </Link>
-                  </span>
+                  Fetch historical search volume from DataForSEO to visualize trends over time.
                 </div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="font-semibold text-gray-900 mb-1">3) Compute Opportunity (v2)</div>
+                <div className="font-semibold text-gray-900 mb-1">3) View Opportunity Scores</div>
                 <div className="text-gray-600">
-                  Pull monthly searches + CPC and compute Opportunity/Efficiency.
+                  Opportunity scores are automatically calculated and displayed when you view trends.
                   <span className="ml-2">
                     <Link href="/help#opportunity-v2" className="text-blue-600 hover:text-blue-800 underline">
                       How it works
@@ -289,7 +198,7 @@ function HomeContent() {
                   {loading ? 'Loading Trends...' : 'Compare Term Trends'}
                 </h3>
                 <p className="text-gray-600 text-sm">
-                  Analyze search trend data and see Trend Opportunity Scores (TOS) for your {queries.length} {queries.length === 1 ? 'query' : 'queries'}.
+                  Analyze search trend data for your {queries.length} {queries.length === 1 ? 'query' : 'queries'}.
                 </p>
               </button>
             </div>
@@ -307,14 +216,6 @@ function HomeContent() {
                     className="px-4 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
                   >
                     {loading ? 'Refreshing...' : '🔄 Refresh'}
-                  </button>
-                  <button
-                    onClick={handleRefreshOpportunity}
-                    disabled={opportunityLoading || loading}
-                    className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-                    title="Fetch Google Ads metrics and recompute opportunity scores"
-                  >
-                    {opportunityLoading ? '💰 Computing...' : '💰 Opportunity'}
                   </button>
                   <Link
                     href="/help#opportunity-v2"
@@ -337,7 +238,7 @@ function HomeContent() {
                 <div className="flex items-center justify-center py-12">
                   <div className="text-center">
                     <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-4"></div>
-                    <p className="text-gray-600">Fetching trend data from Google Trends...</p>
+                    <p className="text-gray-600">Fetching trend data from DataForSEO...</p>
                   </div>
                 </div>
               )}
@@ -349,12 +250,31 @@ function HomeContent() {
                 </div>
               )}
 
-              {/* Chart and Scores */}
+              {/* Chart */}
               {!loading && trendSeries.length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Chart - takes 2 columns */}
-                  <div className="lg:col-span-2">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Search Interest Over Time (90 Days)</h3>
+                <div>
+                  {/* Chart - full width */}
+                  <div>
+                    {(() => {
+                      // Calculate actual date range from the data
+                      const allDates = trendSeries.flatMap(s => s.data.map(d => new Date(d.date)));
+                      if (allDates.length > 0) {
+                        const sortedDates = allDates.sort((a, b) => a.getTime() - b.getTime());
+                        const startDate = sortedDates[0];
+                        const endDate = sortedDates[sortedDates.length - 1];
+                        const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+                        const monthsDiff = Math.round(daysDiff / 30);
+                        const startDateStr = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                        const endDateStr = endDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                        const title = monthsDiff >= 12 
+                          ? `Search Interest Over Time (${startDateStr} - ${endDateStr})`
+                          : daysDiff >= 30
+                          ? `Search Interest Over Time (${monthsDiff} months: ${startDateStr} - ${endDateStr})`
+                          : `Search Interest Over Time (${daysDiff} days: ${startDateStr} - ${endDateStr})`;
+                        return <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>;
+                      }
+                      return <h3 className="text-lg font-semibold text-gray-900 mb-4">Search Interest Over Time</h3>;
+                    })()}
                     <TrendsChart
                       window="90d"
                       series={trendSeries.map(s => ({
@@ -364,30 +284,12 @@ function HomeContent() {
                       }))}
                     />
                   </div>
-
-                  {/* Scores - takes 1 column */}
-                  <div>
-                    {trendScores.length > 0 && (
-                      <TrendScores 
-                        scores={trendScores} 
-                        queries={new Map(queries.map(q => [q.id, q.text]))}
-                      />
-                    )}
-                  </div>
                 </div>
               )}
 
-              {/* Opportunity section */}
+              {/* Opportunity section - automatically loaded when trends are fetched */}
               {!loading && (
                 <div className="mt-6">
-                  {opportunityError && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                      <p className="text-yellow-800">{opportunityError}</p>
-                      <p className="text-yellow-700 text-sm mt-1">
-                        If this is a Google Ads config error, set the server env vars and retry.
-                      </p>
-                    </div>
-                  )}
                   <OpportunityTable rows={opportunityRows} />
                 </div>
               )}

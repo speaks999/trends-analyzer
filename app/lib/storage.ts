@@ -45,6 +45,12 @@ export interface AdsKeywordMetrics {
   top_of_page_bid_low_micros?: number;
   top_of_page_bid_high_micros?: number;
 
+  // Ad traffic metrics (from DataForSEO Ad Traffic by Keywords endpoint)
+  ad_impressions?: number; // More accurate than search volume
+  clicks?: number; // Estimated clicks from targeting
+  ctr?: number; // Click-through rate (0-1, e.g., 0.0234 = 2.34%)
+  avg_cpc_micros?: number; // Average cost per click historically paid (in micros)
+
   raw?: any;
   fetched_at?: Date;
 }
@@ -98,7 +104,7 @@ export interface RelatedTopic {
 }
 
 // Renamed from PeopleAlsoAsk to RelatedQuestion
-// Now using Google Related Questions API: https://serpapi.com/google-related-questions-api
+// Now using DataForSEO SERP API for related questions
 export interface RelatedQuestion {
   id?: string;
   query_id: string;

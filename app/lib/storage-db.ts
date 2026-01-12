@@ -188,7 +188,7 @@ export class DatabaseStorage {
   // Trend snapshot management
   async addTrendSnapshot(snapshot: TrendSnapshot): Promise<void> {
     // Ensure interest_value is a valid number
-    // SerpAPI may return strings like "<1" which we need to handle
+    // Handle string values that may be returned (legacy from cached data)
     // Runtime validation since TypeScript types don't guarantee runtime values
     let interestValue: number;
     const rawValue: any = (snapshot as any).interest_value;
@@ -224,6 +224,50 @@ export class DatabaseStorage {
     }
   }
 
+  // Batch insert trend snapshots (more efficient than individual inserts)
+  async addTrendSnapshotsBatch(snapshots: TrendSnapshot[]): Promise<void> {
+    if (snapshots.length === 0) return;
+
+    // Prepare data for batch insert
+    const data = snapshots.map(snapshot => {
+      // Ensure interest_value is a valid number
+      let interestValue: number;
+      const rawValue: any = (snapshot as any).interest_value;
+      
+      if (typeof rawValue === 'string') {
+        // Handle "<1" format - parse as 0.5
+        if (rawValue.startsWith('<')) {
+          interestValue = 0.5;
+        } else {
+          interestValue = parseFloat(rawValue) || 0;
+        }
+      } else if (typeof rawValue === 'number' && !isNaN(rawValue)) {
+        interestValue = rawValue;
+      } else {
+        interestValue = 0;
+      }
+
+      return {
+        query_id: snapshot.query_id,
+        date: snapshot.date.toISOString(),
+        interest_value: interestValue,
+        region: snapshot.region || null,
+        window: snapshot.window,
+      };
+    });
+
+    const { error } = await this.supabase
+      .from('trend_snapshots')
+      .upsert(data, {
+        onConflict: 'query_id,date,region,window',
+      });
+
+    if (error) {
+      console.error('Error batch adding trend snapshots:', error);
+      throw new Error(`Failed to batch add trend snapshots: ${error.message}`);
+    }
+  }
+
   async getTrendSnapshots(queryId: string, window?: '90d', region?: string): Promise<TrendSnapshot[]> {
     let query = this.supabase
       .from('trend_snapshots')
@@ -254,7 +298,7 @@ export class DatabaseStorage {
     
     // Consider data cached if we have at least some data points
     // For 90d: expect ~90 points (daily) or ~13 points (weekly)
-    const minExpectedPoints = 75; // 90d window - adjust based on SerpAPI granularity
+    const minExpectedPoints = 75; // 90d window - minimum expected data points
     
     return snapshots.length >= minExpectedPoints;
   }
@@ -295,7 +339,7 @@ export class DatabaseStorage {
     });
 
     // Determine if each query has enough cached data
-    const minExpectedPoints = 75; // 90d window - adjust based on SerpAPI granularity
+    const minExpectedPoints = 75; // 90d window - minimum expected data points
     
     queryIdMap.forEach((queryId, queryText) => {
       const count = snapshotCounts.get(queryId) || 0;
@@ -461,7 +505,7 @@ export class DatabaseStorage {
     return (data || []).map(this.mapTrendScoreFromDb);
   }
 
-  // Google Ads keyword metrics management
+  // Keyword metrics management (from DataForSEO)
   async upsertAdsKeywordMetrics(metrics: Omit<AdsKeywordMetrics, 'id' | 'fetched_at'>): Promise<void> {
     const { error } = await this.supabase
       .from('ads_keyword_metrics')
@@ -477,6 +521,11 @@ export class DatabaseStorage {
           competition_index: metrics.competition_index ?? null,
           top_of_page_bid_low_micros: metrics.top_of_page_bid_low_micros ?? null,
           top_of_page_bid_high_micros: metrics.top_of_page_bid_high_micros ?? null,
+          // Ad traffic metrics
+          ad_impressions: metrics.ad_impressions ?? null,
+          clicks: metrics.clicks ?? null,
+          ctr: metrics.ctr ?? null,
+          avg_cpc_micros: metrics.avg_cpc_micros ?? null,
           raw: metrics.raw ?? null,
           fetched_at: new Date().toISOString(),
         },
@@ -538,6 +587,125 @@ export class DatabaseStorage {
       }
     }
     return result;
+  }
+
+  // Check if ads keyword metrics exist and are recent (within maxAgeDays)
+  async hasRecentAdsKeywordMetrics(
+    queryId: string,
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH',
+    maxAgeDays: number = 7
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('ads_keyword_metrics')
+      .select('fetched_at')
+      .eq('query_id', queryId)
+      .eq('geo', geo)
+      .eq('language_code', languageCode)
+      .eq('network', network)
+      .order('fetched_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data || !data.fetched_at) return false;
+
+    const fetchedAt = new Date(data.fetched_at);
+    const ageInDays = (Date.now() - fetchedAt.getTime()) / (1000 * 60 * 60 * 24);
+    return ageInDays < maxAgeDays;
+  }
+
+  // Check if opportunity scores exist and are recent (within maxAgeDays)
+  async hasRecentOpportunityScores(
+    queryIds: string[],
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: OpportunityScore['network'] = 'GOOGLE_SEARCH',
+    window: '90d' = '90d',
+    maxAgeDays: number = 7
+  ): Promise<Map<string, boolean>> {
+    const result = new Map<string, boolean>();
+    if (!queryIds || queryIds.length === 0) return result;
+
+    const { data, error } = await this.supabase
+      .from('opportunity_scores')
+      .select('query_id, calculated_at')
+      .in('query_id', queryIds)
+      .eq('geo', geo)
+      .eq('language_code', languageCode)
+      .eq('network', network)
+      .eq('window', window)
+      .order('calculated_at', { ascending: false });
+
+    if (error || !data) {
+      queryIds.forEach(id => result.set(id, false));
+      return result;
+    }
+
+    // Group by query_id and keep the newest
+    const scoresByQuery = new Map<string, Date>();
+    for (const row of data) {
+      if (!row?.query_id || !row?.calculated_at) continue;
+      if (!scoresByQuery.has(row.query_id)) {
+        scoresByQuery.set(row.query_id, new Date(row.calculated_at));
+      }
+    }
+
+    // Check if each query has recent scores
+    const now = Date.now();
+    queryIds.forEach(queryId => {
+      const calculatedAt = scoresByQuery.get(queryId);
+      if (!calculatedAt) {
+        result.set(queryId, false);
+      } else {
+        const ageInDays = (now - calculatedAt.getTime()) / (1000 * 60 * 60 * 24);
+        result.set(queryId, ageInDays < maxAgeDays);
+      }
+    });
+
+    return result;
+  }
+
+  // Get monthly_searches data from cached ads_keyword_metrics (stored in raw field)
+  async getCachedMonthlySearches(
+    queryId: string,
+    geo: string = 'US',
+    languageCode: string = 'en',
+    network: AdsKeywordMetrics['network'] = 'GOOGLE_SEARCH'
+  ): Promise<Array<{ month: string; search_volume: number }> | null> {
+    const metrics = await this.getAdsKeywordMetrics(queryId, geo, languageCode, network);
+    if (!metrics || !metrics.raw) return null;
+
+    try {
+      // Try to extract monthly_searches from raw data
+      const raw = metrics.raw as any;
+      if (raw.monthly_searches && Array.isArray(raw.monthly_searches)) {
+        return raw.monthly_searches.map((m: any) => {
+          // Ensure month is always a string in "YYYY-MM" format
+          let monthStr: string;
+          if (typeof m.month === 'string' && m.month.includes('-')) {
+            // Already in "YYYY-MM" format
+            monthStr = m.month;
+          } else if (m.year && m.month) {
+            // Construct from year and month (month might be number or string)
+            const monthNum = typeof m.month === 'number' ? m.month : parseInt(String(m.month), 10);
+            monthStr = `${m.year}-${String(monthNum).padStart(2, '0')}`;
+          } else {
+            // Fallback: try to use m.month as-is, but convert to string
+            monthStr = String(m.month || '');
+          }
+          
+          return {
+            month: monthStr,
+            search_volume: typeof m.search_volume === 'number' ? m.search_volume : Number(m.search_volume) || 0,
+          };
+        });
+      }
+    } catch (error) {
+      console.warn('Error extracting monthly_searches from cached data:', error);
+    }
+
+    return null;
   }
 
   // Opportunity scores management
@@ -1152,6 +1320,23 @@ export class DatabaseStorage {
         row.top_of_page_bid_high_micros !== null && row.top_of_page_bid_high_micros !== undefined
           ? Number(row.top_of_page_bid_high_micros)
           : undefined,
+      // Ad traffic metrics
+      ad_impressions:
+        row.ad_impressions !== null && row.ad_impressions !== undefined
+          ? Number(row.ad_impressions)
+          : undefined,
+      clicks:
+        row.clicks !== null && row.clicks !== undefined
+          ? Number(row.clicks)
+          : undefined,
+      ctr:
+        row.ctr !== null && row.ctr !== undefined
+          ? Number(row.ctr)
+          : undefined,
+      avg_cpc_micros:
+        row.avg_cpc_micros !== null && row.avg_cpc_micros !== undefined
+          ? Number(row.avg_cpc_micros)
+          : undefined,
       raw: row.raw || undefined,
       fetched_at: row.fetched_at ? new Date(row.fetched_at) : undefined,
     };
@@ -1329,7 +1514,7 @@ export class DatabaseStorage {
   }
 
   // Related Questions management (formerly People Also Ask)
-  // Using Google Related Questions API: https://serpapi.com/google-related-questions-api
+  // Using DataForSEO SERP API for related questions
   async saveRelatedQuestions(queryId: string, questions: Omit<RelatedQuestion, 'id' | 'query_id' | 'created_at'>[]): Promise<void> {
     if (questions.length === 0) return;
 
