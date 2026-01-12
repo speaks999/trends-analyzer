@@ -126,7 +126,7 @@ export async function fetchKeywordHistoricalMetrics(params: {
   const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
     ? normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)
     : undefined;
-  const apiVersion = (process.env.GOOGLE_ADS_API_VERSION || 'v16').trim();
+  const apiVersion = (process.env.GOOGLE_ADS_API_VERSION || 'v18').trim();
 
   const keywords = (params.keywords || []).map((k) => k.trim()).filter(Boolean);
   if (keywords.length === 0) return [];
