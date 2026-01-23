@@ -340,6 +340,8 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
             const hasData = topics.length > 0 || questions.length > 0;
             const generatingPlatform = generatingArticle.get(query.id);
             const article = articles.get(query.id);
+            const articleContentSizing =
+              article?.platform === 'blog' ? 'max-h-96 overflow-y-auto' : 'overflow-visible';
             
             // Debug logging
             if (topics.length > 0 || questions.length > 0) {
@@ -511,7 +513,7 @@ export default function QueryList({ queries, classifications, onRemove }: QueryL
                         </div>
                         
                         {/* Content Display */}
-                        <div className={`bg-white p-4 rounded-lg border max-h-96 overflow-y-auto ${
+                        <div className={`bg-white p-4 rounded-lg border ${articleContentSizing} ${
                           article.platform === 'blog' ? 'border-green-100' :
                           article.platform === 'linkedin' ? 'border-blue-100' :
                           article.platform === 'instagram' ? 'border-pink-100' :
